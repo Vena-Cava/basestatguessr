@@ -64,6 +64,13 @@ p{color:var(--mute);line-height:1.5;margin:0 0 14px}
 .board td:nth-child(3){font-family:var(--mono);color:var(--mute);text-align:right}
 .board .bh td{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mute);font-family:var(--mono);font-weight:500}
 .board tr.me td{background:#ffcb3d14;color:var(--accent)}
+.timer{position:relative;height:22px;margin:12px 0 2px;border-radius:999px;background:var(--bg);border:1px solid var(--line);overflow:hidden}
+.timer .tfill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#4ade80,#ffcb3d);transition:width .2s linear}
+.timer.low .tfill{background:var(--bad)}
+.timer .tnum{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:12px;font-weight:700;color:var(--ink);text-shadow:0 1px 2px #000}
+.admin tr.gone td{opacity:.5}
+.admin input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
+.tag{font-size:10px;font-family:var(--mono);color:var(--bad);text-transform:uppercase;letter-spacing:.06em}
 .fdetails{margin-top:20px}
 .fdetails summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--bg);border:1px solid var(--line);border-radius:14px;user-select:none}
 .fdetails summary::-webkit-details-marker{display:none}
@@ -296,20 +303,81 @@ class LocalRun{
     const misses=s.misses;
     s.score+=pts;s.rounds++;if(pts===100)s.perfect++;if(pts===0&&this.inf)s.lives--;s.idx++;s.misses=0;
     if(this.inf?s.lives<=0:s.rounds>=ROUNDS)s.over=true;
-    const out={result:'round',pts,misses,near,gaveUp,reveal:revealOf(m),state:this.state()};
-    if(!s.over)out.next=viewOf(this.mode,this.cur());
-    return out;
+    return{result:'round',pts,misses,near,gaveUp,reveal:revealOf(m),state:this.state()};
   }
+  async next(){return{state:this.state(),round:viewOf(this.mode,this.cur(),this.s.misses)}}
   async end(){this.s.over=true;return{state:this.state()}}
+  save(){return{mode:this.mode,inf:this.inf,pool:this.pool.map(m=>m.id),picks:this.picks.map(m=>m.id),s:this.s}}
+  static load(d){
+    const byId=new Map(MONS.map(m=>[m.id,m])),get=ids=>ids.map(i=>byId.get(i)).filter(Boolean);
+    const r=new LocalRun(d.mode,get(d.pool),d.inf);r.picks=get(d.picks);r.s=d.s;return r;
+  }
 }
 class RemoteRun{
-  constructor(mode){this.mode=mode}
+  constructor(mode,id){this.mode=mode;this.id=id}
   async start(){const r=await api('/run/start',{mode:this.mode});this.id=r.runId;return r}
+  next(){return api('/run/next',{runId:this.id})}
+  status(){return api('/run/state',{runId:this.id})}
   guess(body){const{_name,...b}=body;return api('/run/guess',{runId:this.id,no:G.round.no,...b})}
   end(){return api('/run/end',{runId:this.id})}
   submit(name){return api('/run/submit',{runId:this.id,name})}
 }
 const lifeNote=pts=>G.inf&&pts===0?`<div class="lifelost">${G.state.lives>0?`Life lost: ${G.state.lives} left`:'Out of lives!'}</div>`:'';
+
+/* ---------- SAVED RUN ----------
+   The run in progress is saved after every step, so refreshing the page picks it back up. */
+function saveGame(){
+  if(!G||(G.finished&&!(G.ranked&&!G.submitted))){store.set('bsg-run',null);return}
+  const d={mode:G.mode,inf:G.inf,ranked:G.ranked,localBoard:G.localBoard,results:G.results,tries:G.tries||[],finished:!!G.finished};
+  if(G.ranked)d.runId=G.be.id;
+  else{d.run=G.be.save();d.round=G.round;d.revealing=G.revealing}
+  store.set('bsg-run',d);
+}
+const clearGame=()=>store.set('bsg-run',null);
+async function resumeGame(){
+  const d=store.get('bsg-run',null);
+  if(!d)return false;
+  try{
+    if(d.ranked){
+      const be=new RemoteRun(d.mode,d.runId), r=await be.status();
+      G={mode:d.mode,inf:true,ranked:true,localBoard:false,be,state:r.state,results:d.results||[],tries:d.tries||[],revealing:false,finished:false};
+      if(r.state.over){if(r.state.submitted){clearGame();G=null;return false}finish();return true}
+      if(r.round){G.round=r.round;setDeadline(r.timeLeft,r.roundSeconds);G.resumedMisses=r.misses;showRound()}
+      else nextRound();
+      return true;
+    }
+    const be=LocalRun.load(d.run);
+    G={mode:d.mode,inf:d.inf,ranked:false,localBoard:d.localBoard,be,state:be.state(),results:d.results||[],tries:d.tries||[],revealing:false,finished:false};
+    if(G.state.over){clearGame();G=null;return false}
+    if(d.revealing){nextRound();return true}
+    G.round=d.round;G.resumedMisses=be.s.misses;showRound();
+    return true;
+  }catch(e){
+    clearGame();G=null;
+    toast(e.status===409?'That run has ended':'Couldn\'t resume your run');
+    return false;
+  }
+}
+
+/* ---------- ROUND TIMER (ranked runs) ----------
+   The server keeps the real clock; this just shows it. */
+let timerHandle=null;
+function setDeadline(ms,secs){G.deadline=ms==null?null:Date.now()+ms;if(secs)G.roundSeconds=secs}
+function stopTimer(){clearInterval(timerHandle);timerHandle=null}
+function startTimer(onExpire){
+  stopTimer();
+  const el=$('#timer');if(!el||!G||!G.deadline)return;
+  const total=(G.roundSeconds||60)*1000;
+  const tick=()=>{
+    const left=Math.max(0,G.deadline-Date.now());
+    el.querySelector('.tfill').style.width=(left/total*100)+'%';
+    el.querySelector('.tnum').textContent=Math.ceil(left/1000)+'s';
+    el.classList.toggle('low',left<=10000);
+    if(left<=0){stopTimer();onExpire()}
+  };
+  tick();timerHandle=setInterval(tick,200);
+}
+const timerBar=()=>G&&G.deadline?`<div class="timer" id="timer"><div class="tfill"></div><span class="tnum"></span></div>`:'';
 
 function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),1700)}
 function hud(){
@@ -345,7 +413,7 @@ function poolFor(s){
 
 /* ---------- SETUP ---------- */
 function setup(){
-  G=null;hud();
+  stopTimer();if(G&&G.finished)clearGame();G=null;hud();
   if(location.hash)history.replaceState(null,'',location.pathname+location.search);
   const best=store.get('bsg-best',{});
   $('#app').innerHTML=`
@@ -419,8 +487,9 @@ async function start(){
     $('#start')&&($('#start').disabled=false);
     return offerUnranked(e.message);
   }
-  G={mode:settings.mode,inf,ranked,localBoard:inf&&isStandard(settings)&&!API_URL,be,state:res.state,round:res.round,results:[],revealing:false,finished:false};
-  showRound();
+  G={mode:settings.mode,inf,ranked,localBoard:inf&&isStandard(settings)&&!API_URL,be,state:res.state,round:res.round,results:[],tries:[],revealing:false,finished:false};
+  if(ranked)setDeadline(res.timeLeft,res.roundSeconds);
+  saveGame();showRound();
 }
 function offerUnranked(msg){
   const d=document.createElement('div');d.className='modal';
@@ -429,14 +498,25 @@ function offerUnranked(msg){
   document.body.appendChild(d);
   d.querySelector('#cancel').onclick=()=>d.remove();
   d.querySelector('#unranked').onclick=()=>{d.remove();
-    G={mode:settings.mode,inf:true,ranked:false,localBoard:false,be:new LocalRun(settings.mode,poolFor(settings),true),results:[],revealing:false,finished:false};
-    G.be.start().then(r=>{G.state=r.state;G.round=r.round;showRound()})};
+    G={mode:settings.mode,inf:true,ranked:false,localBoard:false,be:new LocalRun(settings.mode,poolFor(settings),true),results:[],tries:[],revealing:false,finished:false};
+    G.be.start().then(r=>{G.state=r.state;G.round=r.round;saveGame();showRound()})};
 }
 function showRound(){G.revealing=false;hud();G.mode==='spread'?spreadRound(G.round):whoRound(G.round)}
-function nextRound(){if(G.state.over)return finish();G.round=G.next;showRound()}
+async function nextRound(){
+  stopTimer();
+  if(G.state.over)return finish();
+  const btn=$('#next');busy(true,btn);
+  try{
+    const r=await G.be.next();
+    G.round=r.round;G.state=r.state;G.tries=[];G.resumedMisses=0;
+    if(G.ranked)setDeadline(r.timeLeft,r.roundSeconds);
+    G.revealing=false;saveGame();showRound();
+  }catch(e){busy(false,btn);toast(e.message==='Failed to fetch'?'Connection problem, try again':e.message)}
+}
 function afterRound(res){
-  G.state=res.state;G.next=res.next;G.revealing=true;
-  G.results.push({n:res.reveal.n,pts:res.pts});hud();
+  stopTimer();
+  G.state=res.state;G.revealing=true;G.deadline=null;
+  G.results.push({n:res.reveal.n,pts:res.pts});hud();saveGame();
 }
 const busy=(on,...els)=>els.forEach(e=>e&&(e.disabled=on));
 
@@ -454,9 +534,9 @@ $('#quit').onclick=()=>{
   d.onclick=e=>{if(e.target===d)close()};
   d.querySelector('#stay').onclick=close;
   d.querySelector('#leave').onclick=async()=>{
-    if(!G.inf){close();return setup()}
+    if(!G.inf){close();stopTimer();clearGame();return setup()}
     try{const r=await G.be.end();G.state=r.state}catch(e){G.state.over=true}
-    close();finish();
+    close();stopTimer();finish();
   };
   d.querySelector('#stay').focus();
 };
@@ -473,6 +553,7 @@ function spreadRound(m){
       <div class="who">${pic}<div><div class="pname">${esc(m.n)}</div><div class="types">${typeBadges(m.t)}</div></div></div>
       <div class="bst"><small>BASE STAT TOTAL</small><div>${bst}</div></div>
     </div>
+    ${timerBar()}
     <div class="left" id="left"><span>Points left to place</span><span class="n" id="leftn">0</span></div>
     <div>${STATS.map((s,i)=>`
       <div class="stat" style="--c:${s.c}">
@@ -500,13 +581,15 @@ function spreadRound(m){
   document.querySelectorAll('.num').forEach(n=>{n.oninput=()=>{if(n.value!=='')set(+n.dataset.i,n.value)};n.onblur=()=>{n.value=g[+n.dataset.i]}});
   document.querySelectorAll('.nudge button').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;set(i,b.dataset.d==='rest'?g[i]+(bst-sum(g)):g[i]+(+b.dataset.d))});
   upd();
-  $('#lock').onclick=async()=>{
+  const lock=async(body)=>{
     const btn=$('#lock');busy(true,btn);btn.textContent='Checking…';
-    try{const res=await G.be.guess({stats:g.slice()});afterRound(res);revealSpread(res.reveal,g.slice(),res.pts)}
+    try{const res=await G.be.guess(body);afterRound(res);revealSpread(res.reveal,g.slice(),res.pts,res.timedOut)}
     catch(e){busy(false,btn);upd();toast(e.message==='Failed to fetch'?'Connection problem, try again':e.message)}
   };
+  $('#lock').onclick=()=>lock({stats:g.slice()});
+  startTimer(()=>lock({timeout:true}));
 }
-function revealSpread(m,g,pts){
+function revealSpread(m,g,pts,timedOut){
   const diffs=m.st.map((v,i)=>g[i]-v),off=sum(diffs.map(Math.abs));
   const scale=v=>Math.min(100,v/200*100);
   const pic=hasSprite(m)?`<div class="sprite">${spriteFull(m)}</div>`:'';
@@ -517,7 +600,7 @@ function revealSpread(m,g,pts){
       <div class="bst"><small>BASE STAT TOTAL</small><div>${sum(m.st)}</div></div>
     </div>
     <div class="score"><div class="big" style="color:${pts>=90?'var(--good)':pts>=50?'var(--accent)':'var(--bad)'}">${pts}</div>
-      <div class="sub">${off} point${off===1?'':'s'} off in total${pts===100?' · PERFECT!':''}</div>${lifeNote(pts)}</div>
+      <div class="sub">${timedOut?'Out of time':`${off} point${off===1?'':'s'} off in total${pts===100?' · PERFECT!':''}`}</div>${lifeNote(pts)}</div>
     <div style="margin-top:14px">${STATS.map((s,i)=>`
       <div class="cmp" style="--c:${s.c}">
         <div class="sl" style="color:${s.c}">${s.k}</div>
@@ -536,7 +619,8 @@ function revealSpread(m,g,pts){
 
 /* ---------- MODE 2: WHOSE SPREAD? ---------- */
 function whoRound(view){
-  const st={tries:[],misses:0,clues:view.clues||{},done:false};
+  const st={tries:G.tries||[],misses:G.resumedMisses||0,clues:view.clues||{},done:false};
+  G.tries=st.tries;
   const scale=v=>Math.min(100,v/200*100);
   const CLUES=[
     {lock:'Clue 1 · generation',key:'g',open:c=>`Gen ${c.g}`},
@@ -556,6 +640,7 @@ function whoRound(view){
         </div></div>
         <div class="bst"><small>BASE STAT TOTAL</small><div>${view.bst}</div></div>
       </div>
+      ${st.done?'':timerBar()}
       <div style="margin-top:12px">${STATS.map((s,i)=>`
         <div class="cmp" style="--c:${s.c};grid-template-columns:44px 1fr 48px">
           <div class="sl" style="color:${s.c}">${s.k}</div>
@@ -564,7 +649,7 @@ function whoRound(view){
         </div>`).join('')}</div>
       ${st.done?`
         <div class="score"><div class="big" style="color:${st.pts?'var(--good)':'var(--bad)'}">${st.pts}</div>
-        <div class="sub">${st.pts?`Got it in ${st.misses+1}`:st.gaveUp?'Skipped':'Out of guesses'}</div>${lifeNote(st.pts)}</div>
+        <div class="sub">${st.pts?`Got it in ${st.misses+1}`:st.timedOut?'Out of time':st.gaveUp?'Skipped':'Out of guesses'}</div>${lifeNote(st.pts)}</div>
         ${st.tries.length?`<div class="tries" style="justify-content:center">${st.tries.map(t=>`<span class="try ${t.near?'near':''}">${esc(t.n)}</span>`).join('')}</div>`:''}
         <button class="btn" id="next">${G.state.over?'See results':'Next spread'}</button>`
       :`
@@ -600,8 +685,8 @@ function whoRound(view){
       try{
         const res=await G.be.guess(body);
         if(body.guess&&res.result==='miss'||body.guess&&res.result==='round'&&!res.pts)st.tries.push({n:body._name,near:res.near});
-        if(res.result==='miss'){st.misses=res.misses;st.clues=res.clues;render();$('#g').focus();toast(res.near?'Right species, wrong form!':'Not quite!');return}
-        st.done=true;st.pts=res.pts;st.gaveUp=res.gaveUp;st.misses=res.misses;st.reveal=res.reveal;
+        if(res.result==='miss'){st.misses=res.misses;st.clues=res.clues;G.resumedMisses=res.misses;G.round.clues=res.clues;saveGame();render();$('#g').focus();toast(res.near?'Right species, wrong form!':'Not quite!');return}
+        st.done=true;st.pts=res.pts;st.gaveUp=res.gaveUp;st.timedOut=res.timedOut;st.misses=res.misses;st.reveal=res.reveal;
         $('#toast').classList.remove('show');afterRound(res);render();
       }catch(e){sending=false;busy(false,$('#go'),$('#skip'));toast(e.message==='Failed to fetch'?'Connection problem, try again':e.message)}
     };
@@ -626,6 +711,7 @@ function whoRound(view){
     inp.onblur=()=>setTimeout(()=>list.hidden=true,100);
     $('#go').onclick=submit;
     $('#skip').onclick=()=>send({giveUp:true});
+    startTimer(()=>send({timeout:true}));
     inp.focus();
   };
   render();
@@ -634,7 +720,7 @@ function whoRound(view){
 /* ---------- RESULTS ---------- */
 const sq=p=>p>=90?'🟩':p>=60?'🟨':p>=30?'🟧':'🟥';
 function finish(){
-  G.finished=true;G.revealing=false;hud();
+  stopTimer();G.finished=true;G.revealing=false;hud();saveGame();
   if(G.inf)return finishInfinite();
   const best=store.get('bsg-best',{}),prev=best[G.mode],max=ROUNDS*100,total=G.state.score;
   const full=G.results.length===ROUNDS;
@@ -682,17 +768,17 @@ function finishInfinite(){
     const btn=sf.querySelector('button');busy(true,btn);
     try{
       let entry,rank;
-      if(G.ranked){const r=await G.be.submit(name);entry=r.entry;rank=r.rank}
+      if(G.ranked){const r=await G.be.submit(name);entry=r.entry;rank=r.rank;G.submitted=true;clearGame()}
       else{entry={name,score:s.score,rounds,perfect:s.perfect,date:Date.now()};rank=Board.addLocal(G.mode,entry)}
       showBoard(G.mode,entry,rank);
     }catch(err){busy(false,btn);toast(err.message==='Failed to fetch'?'Connection problem, try again':err.message)}
   };$('#nm').focus()}
   $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(share);toast('Copied!')}catch(e){toast('Copy is blocked here')}};
-  $('#again').onclick=start;$('#menu').onclick=setup;
+  $('#again').onclick=()=>{clearGame();start()};$('#menu').onclick=()=>{clearGame();setup()};
 }
 
 async function showBoard(mode,mine,rank,replace){
-  G=null;hud();
+  stopTimer();if(G&&G.finished)clearGame();G=null;hud();
   const h='#leaderboard-'+mode;
   if(location.hash!==h)history[replace?'replaceState':'pushState'](null,'',h);
   $('#app').innerHTML=`<div class="card"><h2>🏆 Infinite leaderboard</h2><p>Loading…</p></div>`;
@@ -717,12 +803,66 @@ async function showBoard(mode,mine,rank,replace){
    The leaderboard has its own address (#leaderboard-spread / #leaderboard-who), so refreshing stays on it. */
 function route(){
   if(G&&!G.finished){history.pushState(null,'',location.pathname+location.search);return} // don't abandon a game in progress
+  if(location.hash==='#admin')return showAdmin();
   const m=location.hash.match(/^#leaderboard-(spread|who)$/);
   if(m)showBoard(m[1],null,null,true);
-  else if(!G||G.finished)setup();
+  else setup();
 }
 window.addEventListener('popstate',route);
-route();
+
+/* ---------- ADMIN (#admin) ----------
+   Remove or restore leaderboard entries. Needs the ADMIN_TOKEN you set on the server. */
+async function adminApi(path,body){
+  const r=await fetch(API_URL.replace(/\/$/,'')+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',Authorization:'Bearer '+(sessionStorage.getItem('bsg-admin')||'')},body:body?JSON.stringify(body):undefined});
+  let d={};try{d=await r.json()}catch(e){}
+  if(!r.ok){const e=new Error(d.error||'Server error');e.status=r.status;throw e}
+  return d;
+}
+async function showAdmin(mode='spread'){
+  stopTimer();G=null;hud();
+  if(!API_URL){$('#app').innerHTML='<div class="card"><h2>Admin</h2><p>Set API_URL first.</p></div>';return}
+  let tok='';try{tok=sessionStorage.getItem('bsg-admin')||''}catch(e){}
+  if(!tok){
+    $('#app').innerHTML=`<div class="card"><h2>Admin</h2><form class="saveform" id="af"><input id="tok" type="password" placeholder="Admin password" autocomplete="current-password"><button class="btn" type="submit">Log in</button></form></div>`;
+    $('#af').onsubmit=e=>{e.preventDefault();try{sessionStorage.setItem('bsg-admin',$('#tok').value.trim())}catch(err){}showAdmin(mode)};
+    $('#tok').focus();return;
+  }
+  $('#app').innerHTML='<div class="card"><h2>Admin</h2><p>Loading…</p></div>';
+  let list;
+  try{list=(await adminApi('/admin/scores?mode='+mode)).entries}
+  catch(e){if(e.status===401){try{sessionStorage.removeItem('bsg-admin')}catch(err){}toast('Wrong password');return showAdmin(mode)}
+    $('#app').innerHTML=`<div class="card"><h2>Admin</h2><p class="customnote">${esc(e.message)}</p></div>`;return}
+  const fmt=d=>new Date(d).toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+  const live=list.filter(r=>!r.removed).length;
+  $('#app').innerHTML=`
+  <div class="card">
+    <h2>Admin: leaderboard entries</h2>
+    <div class="lens">${Object.entries(MODE_NAMES).map(([k,v])=>`<button class="len ${k===mode?'on':''}" data-m="${k}"><b>${v}</b></button>`).join('')}</div>
+    <p style="margin-top:12px">${live} showing, ${list.length-live} removed. Removed entries are hidden from the leaderboard and can be restored.</p>
+    ${list.length?`<table class="sum board admin"><tr class="bh"><td></td><td>Name</td><td>Rounds</td><td>Score</td></tr>
+      ${list.map(r=>`<tr class="${r.removed?'gone':''}"><td><input type="checkbox" data-id="${r.id}" aria-label="Select ${esc(r.name)}"></td><td>${esc(r.name)}${r.removed?' <b class="tag">removed</b>':''}<small>${fmt(r.date)}</small></td><td>${r.rounds}</td><td>${r.score}</td></tr>`).join('')}</table>`:'<p>No entries yet.</p>'}
+    <div class="row2"><button class="btn danger" id="rm">Remove selected</button><button class="btn ghost" id="rs">Restore selected</button></div>
+    <button class="btn ghost" id="rmall" style="margin-top:10px">Remove all ${MODE_NAMES[mode]} entries…</button>
+    <div class="row2" style="margin-top:10px"><button class="btn ghost" id="out">Log out</button><button class="btn" id="home">Back to menu</button></div>
+  </div>`;
+  const picked=()=>[...document.querySelectorAll('[data-id]:checked')].map(c=>+c.dataset.id);
+  const act=async(path,body,msg)=>{try{const r=await adminApi(path,body);toast(msg.replace('#',r.changed));showAdmin(mode)}catch(e){toast(e.message)}};
+  document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>showAdmin(b.dataset.m));
+  $('#rm').onclick=()=>{const ids=picked();if(!ids.length)return toast('Tick some entries first');act('/admin/remove',{ids},'Removed #')};
+  $('#rs').onclick=()=>{const ids=picked();if(!ids.length)return toast('Tick some entries first');act('/admin/restore',{ids},'Restored #')};
+  $('#rmall').onclick=()=>{
+    const d=document.createElement('div');d.className='modal';
+    d.innerHTML=`<div class="card"><h2>Remove all ${MODE_NAMES[mode]} entries?</h2><p>The whole ${MODE_NAMES[mode]} leaderboard will be cleared. You can still restore entries from this page.</p>
+      <div class="row2"><button class="btn ghost" id="no">Cancel</button><button class="btn danger" id="yes">Remove all</button></div></div>`;
+    document.body.appendChild(d);d.querySelector('#no').onclick=()=>d.remove();
+    d.querySelector('#yes').onclick=()=>{d.remove();act('/admin/remove',{mode,all:true},'Removed #')};
+  };
+  $('#out').onclick=()=>{try{sessionStorage.removeItem('bsg-admin')}catch(e){}showAdmin(mode)};
+  $('#home').onclick=setup;
+}
+
+if(location.hash==='#admin')showAdmin();   // admin page first; a saved game stays saved
+else resumeGame().then(ok=>{if(!ok)route()});
 </script>
 </body>
 </html>

@@ -80,6 +80,7 @@ Until you set it up, the leaderboard is saved on each player's own device.
    ```
    npx wrangler d1 execute basestatguessr --remote --file=schema.sql
    ```
+   (Databases created before November 2026 also need `update-2.sql` run the same way, once.)
 8. Put the server online:
    ```
    npx wrangler deploy
@@ -88,6 +89,20 @@ Until you set it up, the leaderboard is saved on each player's own device.
 9. In `index.html`, find `const API_URL='';` near the top of the script and put that address between the quotes. Upload `index.html` to GitHub.
 
 The Infinite option on the menu now says "ranked with everything included", and the leaderboard shows everyone's scores.
+
+### Removing leaderboard entries (admin)
+
+1. Pick an admin password (at least 16 characters) and give it to the server. In the `worker` folder:
+   ```
+   npx wrangler secret put ADMIN_TOKEN
+   ```
+   Type the password when asked. It's stored by Cloudflare, not in any file.
+2. Go to your site with `#admin` on the end, e.g. `https://vena-cava.github.io/basestatguessr/#admin`, and log in with that password.
+3. Tick entries and choose **Remove selected** (e.g. test runs), or **Remove all** to clear a mode's board when the rules change. Removed entries are hidden, not deleted, and **Restore selected** brings them back.
+
+### Ranked round timer
+
+Ranked rounds have a time limit, kept by the server so refreshing doesn't reset it. It's 60 seconds unless you add `ROUND_SECONDS = "45"` (or any number) under `[vars]` in `wrangler.toml` and redeploy.
 
 ### After every data rebuild
 

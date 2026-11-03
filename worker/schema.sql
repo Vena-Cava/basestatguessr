@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS runs (
   status    TEXT NOT NULL,
   created   INTEGER NOT NULL,
   updated   INTEGER NOT NULL,
-  submitted INTEGER NOT NULL DEFAULT 0
+  submitted INTEGER NOT NULL DEFAULT 0,
+  round_started INTEGER
 );
 CREATE TABLE IF NOT EXISTS scores (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS scores (
   rounds  INTEGER NOT NULL,
   perfect INTEGER NOT NULL,
   created INTEGER NOT NULL,
-  run_id  TEXT UNIQUE
+  run_id  TEXT UNIQUE,
+  removed INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS scores_board ON scores (mode, score DESC, created ASC);
