@@ -294,7 +294,7 @@ class LocalRun{
   async start(){return{state:this.state(),round:viewOf(this.mode,this.cur())}}
   async guess(body){
     const s=this.s,m=this.cur();let pts=null,near,gaveUp;
-    if(this.mode==='spread')pts=Math.max(0,100-sumSt(body.stats.map((v,i)=>Math.abs(v-m.st[i]))));
+    if(this.mode==='spread')pts=Math.max(0,100-sumSt(body.stats.map((v,i)=>Math.abs(v-m.st[i])))/2); // every 2 stat points off costs 1 point
     else if(body.giveUp){pts=0;gaveUp=true}
     else{const x=MONS.find(y=>y.id===body.guess);
       if(x.st.join(',')===m.st.join(','))pts=WHO_POINTS[s.misses];
@@ -422,7 +422,7 @@ function setup(){
     <p>Up to 100 points per round.</p>
     <div class="modes">
       <button class="mode ${settings.mode==='spread'?'on':''}" data-mode="spread"><h3>Build the Spread</h3>
-        <span>You get the Pokémon and its BST. Share the points across six sliders. Every point you're off costs one point.</span></button>
+        <span>You get the Pokémon and its BST. Share the points across six sliders. Every 2 stat points you're off costs 1 point.</span></button>
       <button class="mode ${settings.mode==='who'?'on':''}" data-mode="who"><h3>Whose Spread?</h3>
         <span>You get six raw base stats. Name the Pokémon in 4 guesses or fewer. Each miss gives a clue: generation, then type, then a blurred sprite.</span></button>
     </div>
@@ -600,7 +600,7 @@ function revealSpread(m,g,pts,timedOut){
       <div class="bst"><small>BASE STAT TOTAL</small><div>${sum(m.st)}</div></div>
     </div>
     <div class="score"><div class="big" style="color:${pts>=90?'var(--good)':pts>=50?'var(--accent)':'var(--bad)'}">${pts}</div>
-      <div class="sub">${timedOut?'Out of time':`${off} point${off===1?'':'s'} off in total${pts===100?' · PERFECT!':''}`}</div>${lifeNote(pts)}</div>
+      <div class="sub">${timedOut?'Out of time':pts===100?'PERFECT!':`${off} stat points off in total`}</div>${lifeNote(pts)}</div>
     <div style="margin-top:14px">${STATS.map((s,i)=>`
       <div class="cmp" style="--c:${s.c}">
         <div class="sl" style="color:${s.c}">${s.k}</div>

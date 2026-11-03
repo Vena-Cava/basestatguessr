@@ -2,7 +2,7 @@
 
 A Pokémon base-stat guessing game.
 
-- **Build the Spread:** you're given a Pokémon and its Base Stat Total. Share the points across six sliders. Every point you're off costs one point, from 100 per round.
+- **Build the Spread:** you're given a Pokémon and its Base Stat Total. Share the points across six sliders. Every 2 stat points you're off costs 1 point, from 100 per round.
 - **Whose Spread?:** you're given six raw base stats. Name the Pokémon in 4 guesses or fewer. Each miss gives a clue: generation, then type, then a blurred sprite.
 - **Length:** 5 rounds, or Infinite with 3 lives (score 0 in a round and you lose one).
 
@@ -102,7 +102,7 @@ The Infinite option on the menu now says "ranked with everything included", and 
 
 ### Ranked round timer
 
-Ranked rounds have a time limit, kept by the server so refreshing doesn't reset it. It's 60 seconds unless you add `ROUND_SECONDS = "45"` (or any number) under `[vars]` in `wrangler.toml` and redeploy.
+Ranked rounds have a time limit, kept by the server so refreshing doesn't reset it: 2 minutes for Build the Spread and 1 minute for Whose Spread?. To change them, add `SPREAD_SECONDS = "150"` and/or `WHO_SECONDS = "45"` under `[vars]` in `wrangler.toml` and redeploy.
 
 ### After every data rebuild
 

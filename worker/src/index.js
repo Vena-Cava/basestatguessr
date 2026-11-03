@@ -28,7 +28,8 @@ const WHO_POINTS = [100, 75, 50, 25];
 const LIVES = 3;
 const RUN_TTL_MS = 6 * 60 * 60 * 1000; // a run left untouched for 6 hours can no longer be played
 const GRACE_MS = 3000;                  // allowance for slow connections on the round timer
-const roundMs = env => (parseInt(env.ROUND_SECONDS, 10) || 60) * 1000;
+// Seconds per round in ranked runs, per mode. Building a spread takes longer than naming one.
+const roundMs = (env, mode) => (parseInt(mode === 'spread' ? env.SPREAD_SECONDS : env.WHO_SECONDS, 10) || (mode === 'spread' ? 120 : 60)) * 1000;
 
 // ----- data -----
 const MONS = DATA.mons.map(([id, n, s, g, t, st, form]) => ({ id, n, s, g, t, st, form, key: st.join(',') }));
@@ -60,8 +61,8 @@ function clues(m, misses) {
   return c;
 }
 const reveal = m => ({ id: m.id, n: m.n, s: m.s, t: m.t, g: m.g, st: m.st });
-const withClock = (env, o, r) => Object.assign(o, { timeLeft: timeLeft(env, r), roundSeconds: roundMs(env) / 1000 });
-const timeLeft = (env, r) => r.round_started == null ? null : Math.max(0, r.round_started + roundMs(env) - Date.now());
+const withClock = (env, o, r) => Object.assign(o, { timeLeft: timeLeft(env, r), roundSeconds: roundMs(env, r.mode) / 1000 });
+const timeLeft = (env, r) => r.round_started == null ? null : Math.max(0, r.round_started + roundMs(env, r.mode) - Date.now());
 const publicState = r => ({ lives: r.lives, score: r.score, rounds: r.rounds, perfect: r.perfect, over: r.status !== 'active', submitted: !!r.submitted });
 
 // ----- http helpers -----
@@ -143,14 +144,15 @@ async function guess(env, body) {
   const m = monAt(r.seed, r.idx);
   const after = { ...r };
   let pts = null, extra = {};
-  const late = Date.now() > r.round_started + roundMs(env) + GRACE_MS;
+  const late = Date.now() > r.round_started + roundMs(env, r.mode) + GRACE_MS;
 
   if (body.timeout === true || late) { pts = 0; extra.timedOut = true; }
   else if (r.mode === 'spread') {
     const g = body.stats;
     if (!Array.isArray(g) || g.length !== 6 || !g.every(v => Number.isInteger(v) && v >= 1 && v <= 255)) bad('Stats must be six whole numbers from 1 to 255');
     if (sum(g) !== sum(m.st)) bad('Stats must add up to the BST');
-    pts = Math.max(0, 100 - sum(g.map((v, i) => Math.abs(v - m.st[i]))));
+    // Stats always add up to the BST, so misses come in pairs: every 2 stat points off costs 1 point.
+    pts = Math.max(0, 100 - sum(g.map((v, i) => Math.abs(v - m.st[i]))) / 2);
   } else {
     if (body.giveUp === true) { pts = 0; extra.gaveUp = true; }
     else {
@@ -256,7 +258,7 @@ export default {
     const url = new URL(req.url);
     try {
       if (req.method === 'GET' && url.pathname === '/leaderboard') return json(await leaderboard(env, url), 200, h);
-      if (req.method === 'GET' && url.pathname === '/') return json({ ok: true, name: 'BaseStatGuessr API', pokemon: MONS.length, roundSeconds: roundMs(env) / 1000 }, 200, h);
+      if (req.method === 'GET' && url.pathname === '/') return json({ ok: true, name: 'BaseStatGuessr API', pokemon: MONS.length, roundSeconds: { spread: roundMs(env, 'spread') / 1000, who: roundMs(env, 'who') / 1000 } }, 200, h);
       if (url.pathname.startsWith('/admin/')) {
         assertAdmin(env, req);
         if (req.method === 'GET' && url.pathname === '/admin/scores') return json(await adminScores(env, url), 200, h);
