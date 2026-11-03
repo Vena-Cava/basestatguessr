@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BaseStatGuessr</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e1220; --panel:#161b2e; --panel2:#1d2340; --line:#2a3156; --ink:#eef1ff; --mute:#8d95c2;
+  --accent:#ffcb3d; --good:#4ade80; --bad:#ff6b6b;
+  --hp:#ff5959; --atk:#f5ac78; --def:#fae078; --spa:#9db7f5; --spd:#a7db8d; --spe:#fa92b2;
+  --display:'Bricolage Grotesque',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--display)}
+body{min-height:100vh;background:
+  radial-gradient(1200px 500px at 50% -200px,#26306066,transparent),
+  repeating-linear-gradient(0deg,transparent 0 31px,#ffffff06 31px 32px),var(--bg)}
+button{font-family:inherit;cursor:pointer}
+.wrap{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:22px}
+.logo{font-weight:800;font-size:clamp(24px,5vw,32px);letter-spacing:-.02em;user-select:none}
+.logo b{color:var(--accent)}
+.logo small{display:block;font-size:12px;font-weight:500;color:var(--mute);letter-spacing:.02em}
+.hudwrap{display:flex;align-items:center;gap:14px}
+.hud{font-family:var(--mono);font-size:13px;color:var(--mute);text-align:right}
+.hud strong{color:var(--ink);font-size:18px}
+.quit{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--mute);font-size:20px;line-height:1;display:grid;place-items:center;transition:.15s}
+.quit[hidden]{display:none}
+.quit:hover{color:var(--bad);border-color:var(--bad)}
+.card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 20px 50px #0006}
+h2{margin:0 0 6px;font-size:22px}
+p{color:var(--mute);line-height:1.5;margin:0 0 14px}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}
+.mode{text-align:left;background:var(--bg);border:2px solid var(--line);border-radius:14px;padding:16px;color:var(--ink);transition:.15s}
+.mode:hover{border-color:#4a5490}
+.mode.on{border-color:var(--accent);box-shadow:0 0 0 4px #ffcb3d22}
+.mode h3{margin:0 0 4px;font-size:17px}
+.mode span{color:var(--mute);font-size:13px;line-height:1.4;display:block}
+.label{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--mute);margin:20px 0 8px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline}
+.label button{background:none;border:0;color:var(--mute);font-family:var(--mono);font-size:11px;letter-spacing:0;text-transform:none;text-decoration:underline;padding:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--bg);border:1px solid var(--line);color:var(--mute);border-radius:999px;padding:7px 13px;font-family:var(--mono);font-size:13px}
+.chip.on{background:#ffcb3d1a;border-color:var(--accent);color:var(--accent)}
+.filters{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:4px 14px}
+.fgroup{padding:8px 0;border-bottom:1px solid var(--line)}
+.fgroup:last-child{border-bottom:0}
+.fgroup h4{margin:6px 0 4px;font-size:12px;color:var(--mute);font-family:var(--mono);font-weight:500}
+.frow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0}
+.frow .fl{font-size:15px}
+.frow .fl small{color:var(--mute);font-size:12px;margin-left:6px;font-family:var(--mono)}
+.seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;flex-shrink:0}
+.seg button{background:transparent;border:0;color:var(--mute);font-size:12px;font-weight:700;padding:7px 10px;font-family:var(--mono)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on[data-v="inc"]{background:#ffffff14;color:var(--ink)}
+.seg button.on[data-v="only"]{background:#ffcb3d26;color:var(--accent)}
+.seg button.on[data-v="exc"]{background:#ff6b6b22;color:var(--bad)}
+.poolcount{font-family:var(--mono);font-size:13px;color:var(--mute);margin-top:12px;text-align:center}
+.poolcount b{color:var(--ink)}
+.poolcount.empty b{color:var(--bad)}
+.btn{background:var(--accent);color:#1a1300;border:0;border-radius:12px;padding:14px 22px;font-weight:800;font-size:16px;width:100%;margin-top:20px;transition:.15s}
+.btn:hover:not(:disabled){filter:brightness(1.08);transform:translateY(-1px)}
+.btn:disabled{background:#2a3156;color:var(--mute);cursor:not-allowed}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.btn.danger{background:var(--bad);color:#2a0606}
+.row2{display:flex;gap:10px}.row2 .btn{flex:1}
+.best{font-family:var(--mono);font-size:12px;color:var(--mute);margin-top:12px;text-align:center}
+
+.target{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.who{display:flex;align-items:center;gap:14px;min-width:0}
+.pname{font-size:clamp(26px,6vw,38px);font-weight:800;letter-spacing:-.02em;line-height:1.05}
+.types{display:flex;gap:6px;margin-top:8px}
+.type{font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 9px;border-radius:6px;color:#fff;text-shadow:0 1px 1px #0005;letter-spacing:.05em}
+.bst{text-align:right;font-family:var(--mono)}
+.bst small{display:block;color:var(--mute);font-size:11px;letter-spacing:.12em}
+.bst div{font-size:34px;font-weight:700;color:var(--accent)}
+.sprite{width:84px;height:84px;flex-shrink:0;border-radius:14px;background:var(--bg);border:1px solid var(--line);display:grid;place-items:center;overflow:hidden}
+.sprite img{width:100%;height:100%;object-fit:contain;image-rendering:auto}
+.sprite.big{width:120px;height:120px}
+.qmark{font-size:56px;font-weight:800;color:#3a4278}
+.sprite img.reveal{image-rendering:pixelated;animation:pop .5s cubic-bezier(.2,1.4,.4,1)}
+@keyframes pop{from{transform:scale(.6);opacity:0}to{transform:none;opacity:1}}
+.left{font-family:var(--mono);font-size:14px;margin:12px 0 4px;padding:10px 12px;border-radius:10px;background:var(--bg);border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.left .n{font-weight:700;font-size:16px}
+.left.zero .n{color:var(--good)} .left.over .n{color:var(--bad)} .left.under .n{color:var(--accent)}
+
+.stat{display:grid;grid-template-columns:44px 1fr 62px 150px;gap:10px;align-items:center;padding:9px 0;border-bottom:1px dashed #2a315688}
+.stat:last-child{border-bottom:0}
+.sl{font-family:var(--mono);font-weight:700;font-size:13px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:10px;border-radius:99px;background:var(--bg);outline:none;border:1px solid var(--line)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:var(--c);border:3px solid var(--bg);box-shadow:0 0 0 2px var(--c);cursor:grab}
+input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--c);border:3px solid var(--bg);box-shadow:0 0 0 2px var(--c);cursor:grab}
+input[type=range]::-moz-range-progress{background:var(--c);height:10px;border-radius:99px}
+.num{width:62px;background:var(--bg);border:1px solid var(--line);color:var(--ink);font-family:var(--mono);font-size:15px;font-weight:700;padding:7px 6px;border-radius:8px;text-align:center}
+.num:focus{outline:2px solid var(--accent);border-color:transparent}
+.nudge{display:flex;gap:4px}
+.nudge button{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:7px;font-family:var(--mono);font-size:14px;padding:6px 0}
+.nudge button:hover{border-color:var(--accent)}
+.hint{font-size:12px;color:var(--mute);text-align:center;margin-top:8px}
+
+.cmp{display:grid;grid-template-columns:44px 1fr 96px;gap:10px;align-items:center;padding:7px 0}
+.bars{position:relative;height:26px;background:var(--bg);border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+.bars .a{position:absolute;left:0;top:0;bottom:0;background:var(--c);opacity:.9;transition:width .7s cubic-bezier(.2,.8,.2,1)}
+.bars .g{position:absolute;top:-2px;bottom:-2px;width:3px;background:#fff;box-shadow:0 0 0 2px #0e1220;transition:left .7s cubic-bezier(.2,.8,.2,1)}
+.bars .v{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:13px;font-weight:700;color:#111}
+.diff{font-family:var(--mono);font-size:13px;text-align:right}
+.diff b{font-size:15px}
+.diff .ok{color:var(--good)} .diff .off{color:var(--bad)}
+.score{text-align:center;margin:18px 0 4px}
+.score .big{font-size:64px;font-weight:800;line-height:1;letter-spacing:-.03em}
+.score .sub{font-family:var(--mono);color:var(--mute);font-size:13px;margin-top:4px}
+.legend{font-size:12px;color:var(--mute);display:flex;gap:16px;justify-content:center;margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--mute);margin-right:5px;vertical-align:-1px}
+.legend i.w{background:#fff;width:3px}
+
+.mystery{font-size:clamp(26px,6vw,38px);font-weight:800;letter-spacing:.08em;color:#3a4278}
+.clues{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.clue{font-family:var(--mono);font-size:12px;padding:5px 10px;border-radius:7px;background:var(--bg);border:1px dashed var(--line);color:var(--mute);display:flex;align-items:center;gap:6px}
+.clue.open{border-style:solid;color:var(--ink)}
+.clue.bare{border:0;padding:0;background:none}
+.guessbox{display:flex;gap:8px;margin-top:16px}
+.guessbox input{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--ink);font-family:var(--display);font-size:17px;padding:13px 14px;border-radius:12px;min-width:0}
+.guessbox input:focus{outline:2px solid var(--accent);border-color:transparent}
+.guessbox .btn{width:auto;margin:0}
+.tries{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+.try{font-family:var(--mono);font-size:13px;padding:6px 10px;border-radius:8px;background:#ff6b6b1a;color:var(--bad);border:1px solid #ff6b6b55;text-decoration:line-through}
+.try.near{background:#ffcb3d1a;color:var(--accent);border-color:#ffcb3d55}
+.pips{display:flex;gap:6px;justify-content:center;margin-top:8px}
+.pip{width:10px;height:10px;border-radius:50%;background:var(--line)}
+.pip.on{background:var(--accent)}
+.sugg{position:relative}
+.list{position:absolute;left:0;right:0;top:100%;margin-top:4px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;max-height:260px;overflow:auto;z-index:5;box-shadow:0 16px 30px #0008}
+.list div{padding:10px 14px;cursor:pointer;font-size:15px}
+.list div small{color:var(--mute);font-family:var(--mono);font-size:11px;margin-left:6px}
+.list div.hl,.list div:hover{background:#ffcb3d22;color:var(--accent)}
+
+.sum{width:100%;border-collapse:collapse;margin-top:14px;font-size:15px}
+.sum td{padding:9px 6px;border-bottom:1px solid var(--line)}
+.sum td:last-child{text-align:right;font-family:var(--mono);font-weight:700}
+.sum td:first-child{width:28px;font-size:16px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(90px);background:var(--accent);color:#1a1300;font-weight:700;padding:10px 18px;border-radius:999px;transition:.25s;pointer-events:none;z-index:30}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.modal{position:fixed;inset:0;background:#05070fcc;display:grid;place-items:center;z-index:20;padding:16px;animation:fade .15s}
+.modal .card{max-width:380px;width:100%;text-align:center}
+@keyframes fade{from{opacity:0}}
+.foot{font-size:11px;color:#5a6290;text-align:center;margin-top:26px;line-height:1.5}
+@media (min-width:561px){.target{flex-wrap:nowrap}.who{flex:1}}
+@media (max-width:560px){
+  .modes{grid-template-columns:1fr}
+  .stat{grid-template-columns:38px 1fr 54px;row-gap:6px}
+  .stat .nudge{grid-column:2/4}
+  .num{width:54px}
+  .cmp{grid-template-columns:38px 1fr 80px}
+  .card{padding:18px 14px}
+  .frow{flex-wrap:wrap}
+  .sprite{width:64px;height:64px}.sprite.big{width:96px;height:96px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">Base<b>Stat</b>Guessr<small>how well do you know your spreads?</small></div>
+    <div class="hudwrap"><div class="hud" id="hud"></div><button class="quit" id="quit" title="Quit game" aria-label="Quit game" hidden>✕</button></div>
+  </header>
+  <main id="app"></main>
+  <div class="foot">Fan-made game. Pokémon and all related names are trademarks of Nintendo, Game Freak and The Pokémon Company.</div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="data/game-data.js"></script>
+<script src="data/sprites.js"></script>
+<script>
+/* Data is lightly scrambled so answers and full images don't sit in plain sight in the page source.
+   This stops casual peeking; a fully cheat-proof version needs a server that only sends answers after a guess. */
+const K = window.BSG_DATA.k;
+function unscramble(b64){const bin=atob(b64),out=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i)^K.charCodeAt(i%K.length);return out}
+const MONS = JSON.parse(new TextDecoder().decode(unscramble(window.BSG_DATA.d))).map(a=>({
+  n:a[0],s:a[1],g:a[2],t:a[3],st:a[4],form:a[5],stage:a[6],leg:a[7],ubp:a[8],cat:a[9],id:a[10]}));
+const SPRITES = window.BSG_SPRITES || {}; // id -> [blurredDataURI, scrambledFullImage]
+const GAME_NAME='BaseStatGuessr', ROUNDS=5, WHO_POINTS=[100,75,50,25];
+const STATS=[{k:'HP',c:'var(--hp)'},{k:'Atk',c:'var(--atk)'},{k:'Def',c:'var(--def)'},{k:'SpA',c:'var(--spa)'},{k:'SpD',c:'var(--spd)'},{k:'Spe',c:'var(--spe)'}];
+const TYPE_COLORS={NORMAL:'#9fa19f',FIRE:'#e62829',WATER:'#2980ef',ELECTRIC:'#fac000',GRASS:'#3fa129',ICE:'#3dcef3',FIGHTING:'#ff8000',POISON:'#9141cb',GROUND:'#915121',FLYING:'#81b9ef',PSYCHIC:'#ef4179',BUG:'#91a119',ROCK:'#afa981',GHOST:'#704170',DRAGON:'#5060e1',DARK:'#624d4e',STEEL:'#60a1b8',FAIRY:'#ef70ef'};
+const FILTERS=[
+  {group:'Forms',items:[
+    {id:'mega',label:'Megas & Primals',test:m=>m.form==='mega'},
+    {id:'regional',label:'Regional variants',test:m=>m.form==='regional'},
+    {id:'alt',label:'Alternate forms',test:m=>m.form==='alt'}]},
+  {group:'Evolution stage',items:[
+    {id:'base',label:'Base stages',test:m=>m.stage==='base'},
+    {id:'middle',label:'Middle stages',test:m=>m.stage==='middle'},
+    {id:'final',label:'Final stages',test:m=>m.stage==='final'},
+    {id:'single',label:'Single stages',hint:'don\'t evolve',test:m=>m.stage==='single'}]},
+  {group:'Status',items:[
+    {id:'leg',label:'Legendaries & Mythicals',test:m=>!!m.leg},
+    {id:'ubp',label:'Ultra Beasts & Paradox',test:m=>!!m.ubp}]}
+];
+const ALL_FILTER_IDS=FILTERS.flatMap(g=>g.items.map(i=>i.id));
+
+const norm=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/♀/g,'f').replace(/♂/g,'m').replace(/[^a-z0-9]/g,'');
+const GUESSABLE=[...new Map(MONS.map(m=>[norm(m.n),m])).values()].sort((a,b)=>(a.form==='base'?0:1)-(b.form==='base'?0:1)||a.n.localeCompare(b.n));
+const BY_NORM=Object.fromEntries(GUESSABLE.map(m=>[norm(m.n),m]));
+GUESSABLE.forEach(m=>{m._n=norm(m.n);m._s=norm(m.s)});
+const sum=a=>a.reduce((x,y)=>x+y,0);
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const typeBadges=t=>t.map(x=>`<span class="type" style="background:${TYPE_COLORS[x]||'#666'}">${x}</span>`).join('');
+const store={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+
+const DEFAULT_SETTINGS={mode:'spread',gens:[1,2,3,4,5,6,7,8,9],f:Object.fromEntries(ALL_FILTER_IDS.map(i=>[i,'inc']))};
+let settings=Object.assign({},DEFAULT_SETTINGS,store.get('bsg-settings2',{}));
+settings.f=Object.assign({},DEFAULT_SETTINGS.f,settings.f||{});
+const save=()=>store.set('bsg-settings2',settings);
+let G=null;
+
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),1700)}
+function hud(){
+  const playing=!!G&&(G.i<G.picks.length||G.revealing);
+  $('#quit').hidden=!playing;
+  $('#hud').innerHTML=G?`Round <strong>${Math.min(G.i+(G.revealing?0:1),G.picks.length)}</strong>/${G.picks.length}<br>Score <strong>${G.total}</strong>`:'';
+}
+
+/* Sprites: blurred version is pre-blurred pixels (no sharp image is in the page until reveal). */
+const spriteBlur=m=>SPRITES[m.id]?`<img src="${SPRITES[m.id][0]}" alt="Blurred mystery Pokémon">`:'';
+function spriteFull(m){
+  const s=SPRITES[m.id]; if(!s)return '';
+  const url=URL.createObjectURL(new Blob([unscramble(s[1])],{type:'image/webp'}));
+  return `<img class="reveal" src="${url}" alt="${esc(m.n)}">`;
+}
+const hasSprite=m=>!!SPRITES[m.id];
+
+/* ---------- POOL ---------- */
+function poolFor(s){
+  return MONS.filter(m=>{
+    if(!s.gens.includes(m.g))return false;
+    for(const grp of FILTERS){
+      const only=grp.items.filter(i=>s.f[i.id]==='only');
+      if(only.length&&!only.some(i=>i.test(m)))return false;
+      if(grp.items.some(i=>s.f[i.id]==='exc'&&i.test(m)))return false;
+    }
+    return true;
+  });
+}
+
+/* ---------- SETUP ---------- */
+function setup(){
+  G=null;hud();
+  const best=store.get('bsg-best',{});
+  $('#app').innerHTML=`
+  <div class="card">
+    <h2>Pick a mode</h2>
+    <p>${ROUNDS} rounds, up to 100 points each.</p>
+    <div class="modes">
+      <button class="mode ${settings.mode==='spread'?'on':''}" data-mode="spread"><h3>Build the Spread</h3>
+        <span>You get the Pokémon and its BST. Share the points across six sliders. Every point you're off costs one point.</span></button>
+      <button class="mode ${settings.mode==='who'?'on':''}" data-mode="who"><h3>Whose Spread?</h3>
+        <span>You get six raw base stats. Name the Pokémon in 4 guesses or fewer. Each miss gives a clue: generation, then type, then a blurred sprite.</span></button>
+    </div>
+    <div class="label">Generations <button id="allgens">${settings.gens.length===9?'none':'all'}</button></div>
+    <div class="chips" id="gens">${[1,2,3,4,5,6,7,8,9].map(g=>`<button class="chip ${settings.gens.includes(g)?'on':''}" data-g="${g}">Gen ${g}</button>`).join('')}</div>
+    <div class="label">Filters <button id="resetf">reset</button></div>
+    <div class="filters">
+      ${FILTERS.map(grp=>`<div class="fgroup"><h4>${grp.group}</h4>
+        ${grp.items.map(it=>`<div class="frow"><span class="fl">${it.label}${it.hint?`<small>${it.hint}</small>`:''}</span>
+          <div class="seg" data-id="${it.id}">${[['inc','Include'],['only','Only'],['exc','Exclude']].map(([v,l])=>`<button data-v="${v}" class="${settings.f[it.id]===v?'on':''}">${l}</button>`).join('')}</div></div>`).join('')}
+      </div>`).join('')}
+    </div>
+    <div class="poolcount" id="pc"></div>
+    <button class="btn" id="start">Start</button>
+    <div class="best">${best.spread!=null||best.who!=null?`Best: Build the Spread ${best.spread??'–'}/${ROUNDS*100} · Whose Spread? ${best.who??'–'}/${ROUNDS*100}`:''}</div>
+  </div>`;
+  const refresh=()=>{
+    const n=poolFor(settings).length, pc=$('#pc');
+    pc.className='poolcount'+(n?'':' empty');
+    pc.innerHTML=n?`<b>${n}</b> Pokémon in the pool`:`<b>No Pokémon match these filters</b>`;
+    $('#start').disabled=!n;
+  };
+  document.querySelectorAll('.mode').forEach(b=>b.onclick=()=>{settings.mode=b.dataset.mode;save();document.querySelectorAll('.mode').forEach(x=>x.classList.toggle('on',x===b))});
+  document.querySelectorAll('#gens .chip').forEach(b=>b.onclick=()=>{
+    const g=+b.dataset.g;settings.gens=settings.gens.includes(g)?settings.gens.filter(x=>x!==g):[...settings.gens,g];
+    b.classList.toggle('on');save();$('#allgens').textContent=settings.gens.length===9?'none':'all';refresh();
+  });
+  $('#allgens').onclick=()=>{settings.gens=settings.gens.length===9?[]:[1,2,3,4,5,6,7,8,9];save();setup()};
+  $('#resetf').onclick=()=>{settings.f={...DEFAULT_SETTINGS.f};save();setup()};
+  document.querySelectorAll('.seg').forEach(seg=>seg.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    settings.f[seg.dataset.id]=b.dataset.v;save();seg.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));refresh();
+  }));
+  $('#start').onclick=start;
+  refresh();
+}
+
+function start(){
+  $('#toast').classList.remove('show');
+  const pool=poolFor(settings).slice();
+  for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]]}
+  G={mode:settings.mode,picks:pool.slice(0,ROUNDS),i:0,total:0,results:[]};
+  round();
+}
+function round(){G.revealing=false;hud();if(G.i>=G.picks.length)return finish();G.mode==='spread'?spreadRound():whoRound()}
+
+/* ---------- QUIT ---------- */
+$('#quit').onclick=()=>{
+  const d=document.createElement('div');d.className='modal';
+  d.innerHTML=`<div class="card"><h2>Quit this game?</h2><p>You'll lose this game's score and go back to the menu.</p>
+    <div class="row2"><button class="btn ghost" id="stay">Keep playing</button><button class="btn danger" id="leave">Quit</button></div></div>`;
+  document.body.appendChild(d);
+  const close=()=>{d.remove();document.removeEventListener('keydown',esc_)};
+  const esc_=e=>{if(e.key==='Escape')close()};
+  document.addEventListener('keydown',esc_);
+  d.onclick=e=>{if(e.target===d)close()};
+  d.querySelector('#stay').onclick=close;
+  d.querySelector('#leave').onclick=()=>{close();setup()};
+  d.querySelector('#stay').focus();
+};
+
+/* ---------- MODE 1: BUILD THE SPREAD ---------- */
+function spreadRound(){
+  const m=G.picks[G.i],bst=sum(m.st);
+  const base=Math.floor(bst/6),extra=bst-base*6;
+  const g=STATS.map((_,i)=>base+(i<extra?1:0));
+  const pic=hasSprite(m)?`<div class="sprite">${spriteFull(m)}</div>`:'';
+  $('#app').innerHTML=`
+  <div class="card">
+    <div class="target">
+      <div class="who">${pic}<div><div class="pname">${esc(m.n)}</div><div class="types">${typeBadges(m.t)}</div></div></div>
+      <div class="bst"><small>BASE STAT TOTAL</small><div>${bst}</div></div>
+    </div>
+    <div class="left" id="left"><span>Points left to place</span><span class="n" id="leftn">0</span></div>
+    <div>${STATS.map((s,i)=>`
+      <div class="stat" style="--c:${s.c}">
+        <div class="sl" style="color:${s.c}">${s.k}</div>
+        <input type="range" min="1" max="255" value="${g[i]}" data-i="${i}" aria-label="${s.k}">
+        <input class="num" type="number" min="1" max="255" value="${g[i]}" data-i="${i}" inputmode="numeric" aria-label="${s.k} value">
+        <div class="nudge"><button data-i="${i}" data-d="-5">−5</button><button data-i="${i}" data-d="-1">−</button><button data-i="${i}" data-d="1">+</button><button data-i="${i}" data-d="rest" title="Put all remaining points here">⇥</button></div>
+      </div>`).join('')}</div>
+    <button class="btn" id="lock">Lock in</button>
+    <div class="hint">Your six stats must add up to the BST exactly. ⇥ moves all the points left over into that stat.</div>
+  </div>`;
+  const set=(i,v)=>{
+    v=Math.max(1,Math.min(255,Math.round(+v||1)));g[i]=v;
+    document.querySelector(`input[type=range][data-i="${i}"]`).value=v;
+    const n=document.querySelector(`.num[data-i="${i}"]`);if(document.activeElement!==n)n.value=v;upd();
+  };
+  const upd=()=>{
+    const left=bst-sum(g);
+    $('#leftn').textContent=(left>0?'+':'')+left;
+    $('#left').className='left '+(left===0?'zero':left>0?'under':'over');
+    $('#lock').disabled=left!==0;
+    $('#lock').textContent=left===0?'Lock in':left>0?`Place ${left} more point${left===1?'':'s'}`:`Remove ${-left} point${left===-1?'':'s'}`;
+  };
+  document.querySelectorAll('input[type=range]').forEach(r=>r.oninput=()=>set(+r.dataset.i,r.value));
+  document.querySelectorAll('.num').forEach(n=>{n.oninput=()=>{if(n.value!=='')set(+n.dataset.i,n.value)};n.onblur=()=>{n.value=g[+n.dataset.i]}});
+  document.querySelectorAll('.nudge button').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;set(i,b.dataset.d==='rest'?g[i]+(bst-sum(g)):g[i]+(+b.dataset.d))});
+  upd();
+  $('#lock').onclick=()=>revealSpread(m,g.slice());
+}
+function revealSpread(m,g){
+  const diffs=m.st.map((v,i)=>g[i]-v),off=sum(diffs.map(Math.abs)),pts=Math.max(0,100-off);
+  G.total+=pts;G.results.push({n:m.n,pts});G.i++;G.revealing=true;hud();
+  const scale=v=>Math.min(100,v/200*100);
+  const pic=hasSprite(m)?`<div class="sprite">${spriteFull(m)}</div>`:'';
+  $('#app').innerHTML=`
+  <div class="card">
+    <div class="target">
+      <div class="who">${pic}<div><div class="pname">${esc(m.n)}</div><div class="types">${typeBadges(m.t)}</div></div></div>
+      <div class="bst"><small>BASE STAT TOTAL</small><div>${sum(m.st)}</div></div>
+    </div>
+    <div class="score"><div class="big" style="color:${pts>=90?'var(--good)':pts>=50?'var(--accent)':'var(--bad)'}">${pts}</div>
+      <div class="sub">${off} point${off===1?'':'s'} off in total${pts===100?' · PERFECT!':''}</div></div>
+    <div style="margin-top:14px">${STATS.map((s,i)=>`
+      <div class="cmp" style="--c:${s.c}">
+        <div class="sl" style="color:${s.c}">${s.k}</div>
+        <div class="bars"><div class="a" style="width:0" data-w="${scale(m.st[i])}"></div><div class="g" style="left:0" data-l="${scale(g[i])}"></div><span class="v">${m.st[i]}</span></div>
+        <div class="diff"><span style="color:var(--mute)">${g[i]}</span>&nbsp; <b class="${diffs[i]===0?'ok':'off'}">${diffs[i]===0?'✓':(diffs[i]>0?'+':'')+diffs[i]}</b></div>
+      </div>`).join('')}</div>
+    <div class="legend"><span><i></i>actual</span><span><i class="w"></i>your guess</span></div>
+    <button class="btn" id="next">${G.i>=G.picks.length?'See results':'Next Pokémon'}</button>
+  </div>`;
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    document.querySelectorAll('.bars .a').forEach(e=>e.style.width=e.dataset.w+'%');
+    document.querySelectorAll('.bars .g').forEach(e=>e.style.left=`calc(${e.dataset.l}% - 1px)`);
+  }));
+  $('#next').onclick=round;$('#next').focus();
+}
+
+/* ---------- MODE 2: WHOSE SPREAD? ---------- */
+function whoRound(){
+  const m=G.picks[G.i],key=m.st.join(',');
+  const st={tries:[],done:false};
+  const scale=v=>Math.min(100,v/200*100);
+  const CLUES=[
+    {lock:'Clue 1 · generation',open:()=>`Gen ${m.g}`},
+    {lock:'Clue 2 · type',open:()=>typeBadges(m.t),bare:true},
+    {lock:'Clue 3 · blurred sprite',open:()=>'Blurred sprite shown'}
+  ];
+  const render=()=>{
+    const miss=st.tries.length, show=i=>st.done||miss>i;
+    const pic=hasSprite(m)?`<div class="sprite big">${st.done?spriteFull(m):miss>=3?spriteBlur(m):'<span class="qmark">?</span>'}</div>`:'';
+    $('#app').innerHTML=`
+    <div class="card">
+      <div class="target">
+        <div class="who">${pic}<div>
+          <div class="mystery">${st.done?`<span style="color:var(--ink);letter-spacing:-.02em">${esc(m.n)}</span>`:'? ? ? ? ?'}</div>
+          <div class="clues">${CLUES.map((c,i)=>`<span class="clue ${show(i)?'open':''} ${show(i)&&c.bare?'bare':''}">${show(i)?c.open():c.lock}</span>`).join('')}</div>
+        </div></div>
+        <div class="bst"><small>BASE STAT TOTAL</small><div>${sum(m.st)}</div></div>
+      </div>
+      <div style="margin-top:12px">${STATS.map((s,i)=>`
+        <div class="cmp" style="--c:${s.c};grid-template-columns:44px 1fr 48px">
+          <div class="sl" style="color:${s.c}">${s.k}</div>
+          <div class="bars"><div class="a" style="width:${scale(m.st[i])}%"></div></div>
+          <div class="diff"><b>${m.st[i]}</b></div>
+        </div>`).join('')}</div>
+      ${st.done?`
+        <div class="score"><div class="big" style="color:${st.pts?'var(--good)':'var(--bad)'}">${st.pts}</div>
+        <div class="sub">${st.pts?`Got it in ${miss+1}`:st.gaveUp?'Skipped':'Out of guesses'}</div></div>
+        ${st.tries.length?`<div class="tries" style="justify-content:center">${st.tries.map(t=>`<span class="try ${t.near?'near':''}">${esc(t.n)}</span>`).join('')}</div>`:''}
+        <button class="btn" id="next">${G.i>=G.picks.length?'See results':'Next spread'}</button>`
+      :`
+        <div class="guessbox sugg">
+          <input id="g" placeholder="Name the Pokémon…" autocomplete="off" spellcheck="false" aria-label="Your guess">
+          <button class="btn" id="go">Guess</button>
+          <div class="list" id="list" hidden></div>
+        </div>
+        <div class="pips">${WHO_POINTS.map((p,i)=>`<span class="pip ${i>=miss?'on':''}" title="${p} pts"></span>`).join('')}</div>
+        <div class="hint">Worth <b style="color:var(--accent)">${WHO_POINTS[miss]}</b> points now</div>
+        <div class="tries">${st.tries.map(t=>`<span class="try ${t.near?'near':''}" title="${t.near?'Right species, wrong form':''}">${esc(t.n)}</span>`).join('')}</div>
+        <div class="row2"><button class="btn ghost" id="skip">Give up</button></div>`}
+    </div>`;
+    if(st.done){$('#next').onclick=round;$('#next').focus();return}
+    const inp=$('#g'),list=$('#list');let hl=-1,items=[];
+    const showList=()=>{
+      const q=norm(inp.value);hl=-1;
+      if(!q){list.hidden=true;return}
+      const a=[],b=[];
+      for(const x of GUESSABLE){
+        if(x._n.startsWith(q)||x._s.startsWith(q))a.push(x);
+        else if(x._n.includes(q))b.push(x);
+        if(a.length>=40)break;
+      }
+      items=a.concat(b).slice(0,10);
+      list.innerHTML=items.map((x,i)=>`<div data-i="${i}">${esc(x.n)}</div>`).join('');
+      list.hidden=!items.length;
+      list.querySelectorAll('div').forEach(d=>d.onmousedown=e=>{e.preventDefault();inp.value=items[+d.dataset.i].n;list.hidden=true;submit()});
+    };
+    const finishRound=()=>{st.done=true;G.total+=st.pts;G.results.push({n:m.n,pts:st.pts});G.i++;G.revealing=true;$('#toast').classList.remove('show');hud()};
+    const submit=()=>{
+      const x=BY_NORM[norm(inp.value)];
+      if(!x){toast('Pick a Pokémon from the list');return}
+      if(st.tries.some(t=>t.n===x.n)){toast('Already guessed');return}
+      if(x.st.join(',')===key){st.pts=WHO_POINTS[st.tries.length];finishRound();render();return}
+      const near=x.s===m.s;
+      st.tries.push({n:x.n,near});
+      if(st.tries.length>=WHO_POINTS.length){st.pts=0;finishRound()}
+      render();
+      if(!st.done){$('#g').focus();toast(near?'Right species, wrong form!':'Not quite!')}
+    };
+    inp.oninput=showList;
+    inp.onkeydown=e=>{
+      const ds=list.querySelectorAll('div');
+      if(e.key==='ArrowDown'&&!list.hidden){e.preventDefault();hl=Math.min(ds.length-1,hl+1)}
+      else if(e.key==='ArrowUp'&&!list.hidden){e.preventDefault();hl=Math.max(0,hl-1)}
+      else if(e.key==='Enter'){e.preventDefault();
+        if(hl>=0&&items[hl])inp.value=items[hl].n;
+        else if(!list.hidden&&items.length&&!BY_NORM[norm(inp.value)])inp.value=items[0].n;
+        list.hidden=true;submit();return}
+      else if(e.key==='Escape'){list.hidden=true}
+      ds.forEach((d,i)=>{d.classList.toggle('hl',i===hl);if(i===hl)d.scrollIntoView({block:'nearest'})});
+    };
+    inp.onblur=()=>setTimeout(()=>list.hidden=true,100);
+    $('#go').onclick=submit;
+    $('#skip').onclick=()=>{st.pts=0;st.gaveUp=true;finishRound();render()};
+    inp.focus();
+  };
+  render();
+}
+
+/* ---------- RESULTS ---------- */
+function finish(){
+  hud();
+  const best=store.get('bsg-best',{}),prev=best[G.mode],max=G.picks.length*100;
+  const full=G.picks.length===ROUNDS;
+  const isBest=full&&(prev==null||G.total>prev);if(isBest){best[G.mode]=G.total;store.set('bsg-best',best)}
+  const sq=p=>p>=90?'🟩':p>=60?'🟨':p>=30?'🟧':'🟥';
+  const modeName=G.mode==='spread'?'Build the Spread':'Whose Spread?';
+  const share=`${GAME_NAME} · ${modeName}\n${G.results.map(r=>sq(r.pts)).join('')} ${G.total}/${max}`;
+  $('#app').innerHTML=`
+  <div class="card">
+    <h2>${modeName}: done</h2>
+    <div class="score"><div class="big">${G.total}<span style="font-size:24px;color:var(--mute)">/${max}</span></div>
+      <div class="sub">${isBest&&prev!=null?'New personal best!':prev!=null&&full?`Best: ${prev}`:''}</div></div>
+    <table class="sum">${G.results.map(r=>`<tr><td>${sq(r.pts)}</td><td>${esc(r.n)}</td><td>${r.pts}</td></tr>`).join('')}</table>
+    <div class="row2"><button class="btn ghost" id="copy">Copy result</button><button class="btn" id="again">Play again</button></div>
+    <button class="btn ghost" id="menu" style="margin-top:10px">Change mode or filters</button>
+  </div>`;
+  $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(share);toast('Copied!')}catch(e){toast('Copy is blocked here')}};
+  $('#again').onclick=start;$('#menu').onclick=setup;
+}
+setup();
+</script>
+</body>
+</html>
