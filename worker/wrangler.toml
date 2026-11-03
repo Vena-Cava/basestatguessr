@@ -4,7 +4,7 @@ compatibility_date = "2026-10-01"
 
 [vars]
 # Your GitHub Pages address (no trailing slash). Add more, comma-separated, e.g. a custom domain.
-ALLOWED_ORIGINS = "https://Vena-Cava.github.io"
+ALLOWED_ORIGINS = "https://vena-cava.github.io"
 
 [[d1_databases]]
 binding = "DB"
