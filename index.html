@@ -44,6 +44,19 @@ p{color:var(--mute);line-height:1.5;margin:0 0 14px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{background:var(--bg);border:1px solid var(--line);color:var(--mute);border-radius:999px;padding:7px 13px;font-family:var(--mono);font-size:13px}
 .chip.on{background:#ffcb3d1a;border-color:var(--accent);color:var(--accent)}
+.fdetails{margin-top:20px}
+.fdetails summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--bg);border:1px solid var(--line);border-radius:14px;user-select:none}
+.fdetails summary::-webkit-details-marker{display:none}
+.fdetails summary:hover{border-color:#4a5490}
+.fdetails[open] summary{border-radius:14px 14px 0 0;border-bottom-color:transparent}
+.flabel{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--mute);font-weight:700}
+.fsum{flex:1;font-family:var(--mono);font-size:12px;color:var(--ink);text-align:right}
+.fsum.changed{color:var(--accent)}
+.chev{color:var(--mute);transition:transform .2s}
+.fdetails[open] .chev{transform:rotate(180deg)}
+.fdetails[open] .filters{border-radius:0 0 14px 14px;border-top:0}
+.freset{text-align:right;margin-top:8px}
+.freset button{background:none;border:0;color:var(--mute);font-family:var(--mono);font-size:11px;text-decoration:underline;padding:0}
 .filters{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:4px 14px}
 .fgroup{padding:8px 0;border-bottom:1px solid var(--line)}
 .fgroup:last-child{border-bottom:0}
@@ -212,7 +225,7 @@ const DEFAULT_SETTINGS={mode:'spread',gens:[1,2,3,4,5,6,7,8,9],f:Object.fromEntr
 let settings=Object.assign({},DEFAULT_SETTINGS,store.get('bsg-settings2',{}));
 settings.f=Object.assign({},DEFAULT_SETTINGS.f,settings.f||{});
 const save=()=>store.set('bsg-settings2',settings);
-let G=null;
+let G=null, filtersOpen=false;
 
 function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),1700)}
 function hud(){
@@ -259,13 +272,16 @@ function setup(){
     </div>
     <div class="label">Generations <button id="allgens">${settings.gens.length===9?'none':'all'}</button></div>
     <div class="chips" id="gens">${[1,2,3,4,5,6,7,8,9].map(g=>`<button class="chip ${settings.gens.includes(g)?'on':''}" data-g="${g}">Gen ${g}</button>`).join('')}</div>
-    <div class="label">Filters <button id="resetf">reset</button></div>
+    <details class="fdetails" id="fdet" ${filtersOpen?'open':''}>
+      <summary><span class="flabel">Filters</span><span class="fsum" id="fsum"></span><span class="chev">▾</span></summary>
     <div class="filters">
       ${FILTERS.map(grp=>`<div class="fgroup"><h4>${grp.group}</h4>
         ${grp.items.map(it=>`<div class="frow"><span class="fl">${it.label}${it.hint?`<small>${it.hint}</small>`:''}</span>
           <div class="seg" data-id="${it.id}">${[['inc','Include'],['only','Only'],['exc','Exclude']].map(([v,l])=>`<button data-v="${v}" class="${settings.f[it.id]===v?'on':''}">${l}</button>`).join('')}</div></div>`).join('')}
       </div>`).join('')}
     </div>
+      <div class="freset"><button id="resetf">Reset filters</button></div>
+    </details>
     <div class="poolcount" id="pc"></div>
     <button class="btn" id="start">Start</button>
     <div class="best">${best.spread!=null||best.who!=null?`Best: Build the Spread ${best.spread??'–'}/${ROUNDS*100} · Whose Spread? ${best.who??'–'}/${ROUNDS*100}`:''}</div>
@@ -275,7 +291,11 @@ function setup(){
     pc.className='poolcount'+(n?'':' empty');
     pc.innerHTML=n?`<b>${n}</b> Pokémon in the pool`:`<b>No Pokémon match these filters</b>`;
     $('#start').disabled=!n;
+    const changed=FILTERS.flatMap(g=>g.items).filter(i=>settings.f[i.id]!=='inc');
+    const fs=$('#fsum'); fs.className='fsum'+(changed.length?' changed':'');
+    fs.textContent=changed.length?changed.map(i=>(settings.f[i.id]==='only'?'Only ':'No ')+i.label.toLowerCase()).join(' · '):'Everything included';
   };
+  $('#fdet').ontoggle=e=>{filtersOpen=e.target.open};
   document.querySelectorAll('.mode').forEach(b=>b.onclick=()=>{settings.mode=b.dataset.mode;save();document.querySelectorAll('.mode').forEach(x=>x.classList.toggle('on',x===b))});
   document.querySelectorAll('#gens .chip').forEach(b=>b.onclick=()=>{
     const g=+b.dataset.g;settings.gens=settings.gens.includes(g)?settings.gens.filter(x=>x!==g):[...settings.gens,g];
