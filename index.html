@@ -249,7 +249,7 @@ let G=null, filtersOpen=false;
 
 /* ---------- SERVER ----------
    Put your Cloudflare Worker address here (see README). Leave it empty and the leaderboard stays on each player's device. */
-const API_URL='https://basestatguessr-api.basestatguessr.workers.dev/';
+const API_URL='https://basestatguessr-api.yoursubdomain.workers.dev';
 const MODE_NAMES={spread:'Build the Spread',who:'Whose Spread?'};
 const isStandard=s=>s.gens.length===9&&ALL_FILTER_IDS.every(i=>s.f[i]==='inc');
 const isRanked=s=>s.len==='inf'&&isStandard(s);   // Infinite with everything included = leaderboard run
@@ -346,6 +346,7 @@ function poolFor(s){
 /* ---------- SETUP ---------- */
 function setup(){
   G=null;hud();
+  if(location.hash)history.replaceState(null,'',location.pathname+location.search);
   const best=store.get('bsg-best',{});
   $('#app').innerHTML=`
   <div class="card">
@@ -690,8 +691,10 @@ function finishInfinite(){
   $('#again').onclick=start;$('#menu').onclick=setup;
 }
 
-async function showBoard(mode,mine,rank){
+async function showBoard(mode,mine,rank,replace){
   G=null;hud();
+  const h='#leaderboard-'+mode;
+  if(location.hash!==h)history[replace?'replaceState':'pushState'](null,'',h);
   $('#app').innerHTML=`<div class="card"><h2>🏆 Infinite leaderboard</h2><p>Loading…</p></div>`;
   let list=[],err='';
   try{list=await Board.list(mode)}catch(e){err='Couldn\'t load the leaderboard. Check your connection and try again.'}
@@ -700,7 +703,6 @@ async function showBoard(mode,mine,rank){
   $('#app').innerHTML=`
   <div class="card">
     <h2>🏆 Infinite leaderboard</h2>
-    <p>${API_URL?'Every score here was checked by the server.':'Saved on this device.'} Only runs with every generation and filter included count.</p>
     <div class="lens">${Object.entries(MODE_NAMES).map(([k,v])=>`<button class="len ${k===mode?'on':''}" data-m="${k}"><b>${v}</b></button>`).join('')}</div>
     ${mine&&rank?`<div class="rankmsg">You placed <b>#${rank}</b>!</div>`:''}
     ${err?`<p class="customnote">${err}</p>`:list.length?`<table class="sum board"><tr class="bh"><td>#</td><td>Name</td><td>Rounds</td><td>Score</td></tr>
@@ -708,10 +710,19 @@ async function showBoard(mode,mine,rank){
       :`<p style="text-align:center;margin-top:20px">No runs yet. Be the first!</p>`}
     <button class="btn" id="back">Back to menu</button>
   </div>`;
-  document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>showBoard(b.dataset.m));
+  document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>showBoard(b.dataset.m,null,null,true));
   $('#back').onclick=setup;
 }
-setup();
+/* ---------- PAGES ----------
+   The leaderboard has its own address (#leaderboard-spread / #leaderboard-who), so refreshing stays on it. */
+function route(){
+  if(G&&!G.finished){history.pushState(null,'',location.pathname+location.search);return} // don't abandon a game in progress
+  const m=location.hash.match(/^#leaderboard-(spread|who)$/);
+  if(m)showBoard(m[1],null,null,true);
+  else if(!G||G.finished)setup();
+}
+window.addEventListener('popstate',route);
+route();
 </script>
 </body>
 </html>
