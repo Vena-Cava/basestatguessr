@@ -4,8 +4,9 @@ A Pokémon base-stat guessing game.
 
 - **Build the Spread:** you're given a Pokémon and its Base Stat Total. Share the points across six sliders. Every point you're off costs one point, from 100 per round.
 - **Whose Spread?:** you're given six raw base stats. Name the Pokémon in 4 guesses or fewer. Each miss gives a clue: generation, then type, then a blurred sprite.
+- **Length:** 5 rounds, or Infinite with 3 lives (score 0 in a round and you lose one).
 
-It's a plain static site (no server), so GitHub Pages can host it as-is.
+The site itself is static, so GitHub Pages hosts it. Ranked Infinite runs and the leaderboard use a small free Cloudflare server in `worker/` (see below).
 
 ## Repo layout
 
@@ -16,6 +17,8 @@ data/sprites.js       generated: blurred + full sprites (scrambled)
 tools/build.py        rebuilds the two data files
 tools/stat-report.md  generated: where your fangame files differ from PokéAPI
 tools/fangame/        YOUR files go here (git-ignored, never uploaded)
+worker/               the leaderboard server (Cloudflare Worker + D1 database)
+worker/src/data.js    generated: the server's copy of the Pokémon data
 ```
 
 ## Put it on GitHub Pages
@@ -49,9 +52,56 @@ How the data is combined:
 
 Other options: `--offline` skips PokéAPI entirely; `--pbs DIR` and `--sprites DIR` point at different folders.
 
+## The leaderboard server (Cloudflare)
+
+Infinite runs with every generation and filter included are **ranked**. For those, the server picks each Pokémon, marks every guess and keeps the score itself, so nobody can post a made-up score. Everything else (5-round games, custom filters) runs in the browser as before.
+
+Until you set it up, the leaderboard is saved on each player's own device.
+
+### One-time setup (Windows)
+
+1. Make a free account at [dash.cloudflare.com](https://dash.cloudflare.com/sign-up).
+2. Install **Node.js** (the LTS version) from [nodejs.org](https://nodejs.org/).
+3. Open Command Prompt in the `worker` folder:
+   ```
+   cd "C:\Users\Vena\Documents\folders\basestatguessr\worker"
+   ```
+4. Log in to Cloudflare (a browser window opens; click Allow):
+   ```
+   npx wrangler login
+   ```
+5. Create the database:
+   ```
+   npx wrangler d1 create basestatguessr
+   ```
+   It prints a `database_id`. Open `worker\wrangler.toml` in a text editor and paste it over `PASTE-YOUR-DATABASE-ID-HERE`. (If wrangler offers to add it to your config for you, say yes, and check the binding is called `DB`.)
+6. In the same file, replace `YOUR-USERNAME` in `ALLOWED_ORIGINS` with your GitHub username, so only your site can use the server.
+7. Create the tables:
+   ```
+   npx wrangler d1 execute basestatguessr --remote --file=schema.sql
+   ```
+8. Put the server online:
+   ```
+   npx wrangler deploy
+   ```
+   It prints an address like `https://basestatguessr-api.yourname.workers.dev`. Open it in a browser: you should see `{"ok":true,...}`.
+9. In `index.html`, find `const API_URL='';` near the top of the script and put that address between the quotes. Upload `index.html` to GitHub.
+
+The Infinite option on the menu now says "ranked with everything included", and the leaderboard shows everyone's scores.
+
+### After every data rebuild
+
+`tools/build.py` also rewrites `worker/src/data.js`. After uploading the new `data/` files to GitHub, run `npx wrangler deploy` in the `worker` folder again, so the server and the site use the same Pokémon.
+
+### Free plan limits
+
+Cloudflare's free Workers and D1 plans allow roughly 100,000 requests and 100,000 database writes a day. Each guess is one of each, so that's thousands of runs a day before it matters.
+
 ## About cheating
 
-The answers and sharp sprites are scrambled in the data files and only decoded when a round ends, so inspect element and view-source don't give the answer away. Someone who knows JavaScript could still dig it out. Making the game fully cheat-proof needs a small server that only sends the answer after a guess. A daily mode would need that server anyway.
+- **Ranked runs:** scores can't be faked. The server picks the Pokémon, so players can't re-roll for easy ones. It checks every guess, counts each guess once, and only accepts a leaderboard entry for a run it watched end.
+- **What it can't stop:** someone looking up stats in another tab (Bulbapedia has them all). A time limit per round in ranked runs would make that much harder.
+- **Casual games:** answers and sharp sprites are scrambled in the data files, so inspect element doesn't give them away at a glance.
 
 ---
 

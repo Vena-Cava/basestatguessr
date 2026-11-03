@@ -49,6 +49,7 @@ p{color:var(--mute);line-height:1.5;margin:0 0 14px}
 .len b{display:block;font-size:15px}
 .len span{display:block;color:var(--mute);font-size:12px;margin-top:2px}
 .len.on{border-color:var(--accent);background:#ffcb3d12}
+.ranked{font-size:11px;color:var(--accent);font-weight:700;letter-spacing:.04em}
 .hearts{color:var(--bad);letter-spacing:2px;font-size:15px}
 .len .hearts{display:inline;font-size:14px;margin-left:4px;color:var(--bad)}
 .lifelost{display:inline-block;margin-top:10px;padding:6px 12px;border-radius:999px;background:#ff6b6b22;color:var(--bad);font-weight:700;font-size:14px}
@@ -246,32 +247,78 @@ settings.f=Object.assign({},DEFAULT_SETTINGS.f,settings.f||{});
 const save=()=>store.set('bsg-settings2',settings);
 let G=null, filtersOpen=false;
 
-/* ---------- LEADERBOARD ----------
-   Stored on this device for now. To go online, replace these two functions with calls to a server. */
-const Board={
-  async list(mode){return store.get('bsg-board-'+mode,[])},
-  async submit(mode,entry){const b=store.get('bsg-board-'+mode,[]);b.push(entry);b.sort((x,y)=>y.score-x.score||x.date-y.date);store.set('bsg-board-'+mode,b.slice(0,50));return b.slice(0,50).indexOf(entry)}
-};
+/* ---------- SERVER ----------
+   Put your Cloudflare Worker address here (see README). Leave it empty and the leaderboard stays on each player's device. */
+const API_URL='https://basestatguessr-api.basestatguessr.workers.dev/';
 const MODE_NAMES={spread:'Build the Spread',who:'Whose Spread?'};
 const isStandard=s=>s.gens.length===9&&ALL_FILTER_IDS.every(i=>s.f[i]==='inc');
+const isRanked=s=>s.len==='inf'&&isStandard(s);   // Infinite with everything included = leaderboard run
 const hearts=n=>'<span class="hearts">'+[0,1,2].map(i=>i<n?'♥':'♡').join('')+'</span>';
 const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
-function recordRound(m,pts){
-  G.total+=pts;G.results.push({n:m.n,pts});G.i++;G.revealing=true;
-  if(G.inf&&pts===0)G.lives--;
-  hud();
+
+async function api(path,body){
+  const r=await fetch(API_URL.replace(/\/$/,'')+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
+  let data={};try{data=await r.json()}catch(e){}
+  if(!r.ok){const e=new Error(data.error||'Server error');e.status=r.status;throw e}
+  return data;
 }
-const roundOver=()=>G.inf?G.lives<=0:G.i>=G.picks.length;
-const lifeNote=pts=>G.inf&&pts===0?`<div class="lifelost">${G.lives>0?`Life lost: ${G.lives} left`:'Out of lives!'}</div>`:'';
+
+/* Leaderboard: online when API_URL is set, otherwise on this device. */
+const Board={
+  async list(mode){
+    if(API_URL)return (await api('/leaderboard?mode='+mode)).entries;
+    return store.get('bsg-board-'+mode,[]);
+  },
+  addLocal(mode,entry){const b=store.get('bsg-board-'+mode,[]);b.push(entry);b.sort((x,y)=>y.score-x.score||x.date-y.date);store.set('bsg-board-'+mode,b.slice(0,50));return b.slice(0,50).indexOf(entry)+1}
+};
+
+/* ---------- GAME ENGINES ----------
+   Both answer the same calls with the same shapes. LocalRun plays in the browser (casual games);
+   RemoteRun asks the server, which picks the Pokémon and marks the guesses (leaderboard runs). */
+const sumSt=a=>a.reduce((x,y)=>x+y,0);
+const viewOf=(mode,m,misses=0)=>mode==='spread'?{id:m.id,n:m.n,t:m.t,bst:sumSt(m.st)}:{st:m.st,bst:sumSt(m.st),clues:cluesOf(m,misses)};
+function cluesOf(m,misses){const c={};if(misses>=1)c.g=m.g;if(misses>=2)c.t=m.t;if(misses>=3)c.blur=SPRITES[m.id]?SPRITES[m.id][0]:null;return c}
+const revealOf=m=>({id:m.id,n:m.n,s:m.s,t:m.t,g:m.g,st:m.st});
+class LocalRun{
+  constructor(mode,pool,inf){this.mode=mode;this.pool=pool;this.inf=inf;this.picks=shuffle(pool);
+    this.s={idx:0,misses:0,lives:3,score:0,rounds:0,perfect:0,over:false}}
+  cur(){if(this.s.idx>=this.picks.length)this.picks=this.picks.concat(shuffle(this.pool));return this.picks[this.s.idx]}
+  state(){const s=this.s;return{lives:s.lives,score:s.score,rounds:s.rounds,perfect:s.perfect,over:s.over}}
+  async start(){return{state:this.state(),round:viewOf(this.mode,this.cur())}}
+  async guess(body){
+    const s=this.s,m=this.cur();let pts=null,near,gaveUp;
+    if(this.mode==='spread')pts=Math.max(0,100-sumSt(body.stats.map((v,i)=>Math.abs(v-m.st[i]))));
+    else if(body.giveUp){pts=0;gaveUp=true}
+    else{const x=MONS.find(y=>y.id===body.guess);
+      if(x.st.join(',')===m.st.join(','))pts=WHO_POINTS[s.misses];
+      else{s.misses++;near=x.s===m.s;if(s.misses>=WHO_POINTS.length)pts=0}}
+    if(pts===null)return{result:'miss',near,misses:s.misses,worth:WHO_POINTS[s.misses],clues:cluesOf(m,s.misses),state:this.state()};
+    const misses=s.misses;
+    s.score+=pts;s.rounds++;if(pts===100)s.perfect++;if(pts===0&&this.inf)s.lives--;s.idx++;s.misses=0;
+    if(this.inf?s.lives<=0:s.rounds>=ROUNDS)s.over=true;
+    const out={result:'round',pts,misses,near,gaveUp,reveal:revealOf(m),state:this.state()};
+    if(!s.over)out.next=viewOf(this.mode,this.cur());
+    return out;
+  }
+  async end(){this.s.over=true;return{state:this.state()}}
+}
+class RemoteRun{
+  constructor(mode){this.mode=mode}
+  async start(){const r=await api('/run/start',{mode:this.mode});this.id=r.runId;return r}
+  guess(body){const{_name,...b}=body;return api('/run/guess',{runId:this.id,no:G.round.no,...b})}
+  end(){return api('/run/end',{runId:this.id})}
+  submit(name){return api('/run/submit',{runId:this.id,name})}
+}
+const lifeNote=pts=>G.inf&&pts===0?`<div class="lifelost">${G.state.lives>0?`Life lost: ${G.state.lives} left`:'Out of lives!'}</div>`:'';
 
 function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),1700)}
 function hud(){
   const playing=!!G&&!G.finished;
   $('#quit').hidden=!playing;
-  if(!G){$('#hud').innerHTML='';return}
-  const r=G.i+(G.revealing||G.finished?0:1);
-  $('#hud').innerHTML=G.inf?`Round <strong>${Math.max(1,r)}</strong> ${hearts(G.lives)}<br>Score <strong>${G.total}</strong>`
-    :`Round <strong>${Math.min(r,G.picks.length)}</strong>/${G.picks.length}<br>Score <strong>${G.total}</strong>`;
+  if(!G||!G.state){$('#hud').innerHTML='';return}
+  const r=G.state.rounds+(G.revealing||G.finished?0:1);
+  $('#hud').innerHTML=(G.ranked?'<span class="ranked">🏆 Ranked</span><br>':'')+(G.inf?`Round <strong>${Math.max(1,r)}</strong> ${hearts(G.state.lives)}<br>Score <strong>${G.state.score}</strong>`
+    :`Round <strong>${Math.min(r,ROUNDS)}</strong>/${ROUNDS}<br>Score <strong>${G.state.score}</strong>`);
 }
 
 /* Sprites: blurred version is pre-blurred pixels (no sharp image is in the page until reveal). */
@@ -313,7 +360,7 @@ function setup(){
     <div class="label">Length</div>
     <div class="lens">
       <button class="len ${settings.len==='five'?'on':''}" data-len="five"><b>${ROUNDS} rounds</b><span>Aim for a perfect ${ROUNDS*100}</span></button>
-      <button class="len ${settings.len==='inf'?'on':''}" data-len="inf"><b>Infinite ${hearts(3)}</b><span>Score 0 in a round and you lose a life</span></button>
+      <button class="len ${settings.len==='inf'?'on':''}" data-len="inf"><b>Infinite ${hearts(3)}</b><span>Score 0 in a round and you lose a life${API_URL?' · ranked with everything included':''}</span></button>
     </div>
     <div class="label">Generations <button id="allgens">${settings.gens.length===9?'none':'all'}</button></div>
     <div class="chips" id="gens">${[1,2,3,4,5,6,7,8,9].map(g=>`<button class="chip ${settings.gens.includes(g)?'on':''}" data-g="${g}">Gen ${g}</button>`).join('')}</div>
@@ -360,23 +407,42 @@ function setup(){
   refresh();
 }
 
-function start(){
+async function start(){
   $('#toast').classList.remove('show');
-  const pool=poolFor(settings), inf=settings.len==='inf';
-  const picks=shuffle(pool);
-  G={mode:settings.mode,inf,lives:3,pool,standard:isStandard(settings),picks:inf?picks:picks.slice(0,ROUNDS),i:0,total:0,results:[]};
-  round();
+  const inf=settings.len==='inf', ranked=isRanked(settings)&&!!API_URL;
+  const be=ranked?new RemoteRun(settings.mode):new LocalRun(settings.mode,poolFor(settings),inf);
+  $('#start')&&($('#start').disabled=true);
+  let res;
+  try{res=await be.start()}
+  catch(e){
+    $('#start')&&($('#start').disabled=false);
+    return offerUnranked(e.message);
+  }
+  G={mode:settings.mode,inf,ranked,localBoard:inf&&isStandard(settings)&&!API_URL,be,state:res.state,round:res.round,results:[],revealing:false,finished:false};
+  showRound();
 }
-function round(){
-  G.revealing=false;
-  if(roundOver())return finish();
-  if(G.inf&&G.i>=G.picks.length)G.picks=G.picks.concat(shuffle(G.pool)); // went through the whole pool: reshuffle
-  hud();G.mode==='spread'?spreadRound():whoRound()}
+function offerUnranked(msg){
+  const d=document.createElement('div');d.className='modal';
+  d.innerHTML=`<div class="card"><h2>Can't reach the leaderboard</h2><p>${esc(msg||'The server didn\'t answer.')} You can still play, but the run won't be ranked.</p>
+    <div class="row2"><button class="btn ghost" id="cancel">Back</button><button class="btn" id="unranked">Play unranked</button></div></div>`;
+  document.body.appendChild(d);
+  d.querySelector('#cancel').onclick=()=>d.remove();
+  d.querySelector('#unranked').onclick=()=>{d.remove();
+    G={mode:settings.mode,inf:true,ranked:false,localBoard:false,be:new LocalRun(settings.mode,poolFor(settings),true),results:[],revealing:false,finished:false};
+    G.be.start().then(r=>{G.state=r.state;G.round=r.round;showRound()})};
+}
+function showRound(){G.revealing=false;hud();G.mode==='spread'?spreadRound(G.round):whoRound(G.round)}
+function nextRound(){if(G.state.over)return finish();G.round=G.next;showRound()}
+function afterRound(res){
+  G.state=res.state;G.next=res.next;G.revealing=true;
+  G.results.push({n:res.reveal.n,pts:res.pts});hud();
+}
+const busy=(on,...els)=>els.forEach(e=>e&&(e.disabled=on));
 
 /* ---------- QUIT ---------- */
 $('#quit').onclick=()=>{
   const d=document.createElement('div');d.className='modal';
-  d.innerHTML=G.inf?`<div class="card"><h2>End this run?</h2><p>Your run stops here and your score of ${G.total} counts.</p>
+  d.innerHTML=G.inf?`<div class="card"><h2>End this run?</h2><p>Your run stops here and your score of ${G.state.score} counts.</p>
     <div class="row2"><button class="btn ghost" id="stay">Keep playing</button><button class="btn danger" id="leave">End run</button></div></div>`
     :`<div class="card"><h2>Quit this game?</h2><p>You'll lose this game's score and go back to the menu.</p>
     <div class="row2"><button class="btn ghost" id="stay">Keep playing</button><button class="btn danger" id="leave">Quit</button></div></div>`;
@@ -386,13 +452,17 @@ $('#quit').onclick=()=>{
   document.addEventListener('keydown',esc_);
   d.onclick=e=>{if(e.target===d)close()};
   d.querySelector('#stay').onclick=close;
-  d.querySelector('#leave').onclick=()=>{close();if(G.inf){G.lives=0;finish()}else setup()};
+  d.querySelector('#leave').onclick=async()=>{
+    if(!G.inf){close();return setup()}
+    try{const r=await G.be.end();G.state=r.state}catch(e){G.state.over=true}
+    close();finish();
+  };
   d.querySelector('#stay').focus();
 };
 
 /* ---------- MODE 1: BUILD THE SPREAD ---------- */
-function spreadRound(){
-  const m=G.picks[G.i],bst=sum(m.st);
+function spreadRound(m){
+  const bst=m.bst;
   const base=Math.floor(bst/6),extra=bst-base*6;
   const g=STATS.map((_,i)=>base+(i<extra?1:0));
   const pic=hasSprite(m)?`<div class="sprite">${spriteFull(m)}</div>`:'';
@@ -429,11 +499,14 @@ function spreadRound(){
   document.querySelectorAll('.num').forEach(n=>{n.oninput=()=>{if(n.value!=='')set(+n.dataset.i,n.value)};n.onblur=()=>{n.value=g[+n.dataset.i]}});
   document.querySelectorAll('.nudge button').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;set(i,b.dataset.d==='rest'?g[i]+(bst-sum(g)):g[i]+(+b.dataset.d))});
   upd();
-  $('#lock').onclick=()=>revealSpread(m,g.slice());
+  $('#lock').onclick=async()=>{
+    const btn=$('#lock');busy(true,btn);btn.textContent='Checking…';
+    try{const res=await G.be.guess({stats:g.slice()});afterRound(res);revealSpread(res.reveal,g.slice(),res.pts)}
+    catch(e){busy(false,btn);upd();toast(e.message==='Failed to fetch'?'Connection problem, try again':e.message)}
+  };
 }
-function revealSpread(m,g){
-  const diffs=m.st.map((v,i)=>g[i]-v),off=sum(diffs.map(Math.abs)),pts=Math.max(0,100-off);
-  recordRound(m,pts);
+function revealSpread(m,g,pts){
+  const diffs=m.st.map((v,i)=>g[i]-v),off=sum(diffs.map(Math.abs));
   const scale=v=>Math.min(100,v/200*100);
   const pic=hasSprite(m)?`<div class="sprite">${spriteFull(m)}</div>`:'';
   $('#app').innerHTML=`
@@ -451,60 +524,60 @@ function revealSpread(m,g){
         <div class="diff"><span style="color:var(--mute)">${g[i]}</span>&nbsp; <b class="${diffs[i]===0?'ok':'off'}">${diffs[i]===0?'✓':(diffs[i]>0?'+':'')+diffs[i]}</b></div>
       </div>`).join('')}</div>
     <div class="legend"><span><i></i>actual</span><span><i class="w"></i>your guess</span></div>
-    <button class="btn" id="next">${roundOver()?'See results':'Next Pokémon'}</button>
+    <button class="btn" id="next">${G.state.over?'See results':'Next Pokémon'}</button>
   </div>`;
   requestAnimationFrame(()=>requestAnimationFrame(()=>{
     document.querySelectorAll('.bars .a').forEach(e=>e.style.width=e.dataset.w+'%');
     document.querySelectorAll('.bars .g').forEach(e=>e.style.left=`calc(${e.dataset.l}% - 1px)`);
   }));
-  $('#next').onclick=round;$('#next').focus();
+  $('#next').onclick=nextRound;$('#next').focus();
 }
 
 /* ---------- MODE 2: WHOSE SPREAD? ---------- */
-function whoRound(){
-  const m=G.picks[G.i],key=m.st.join(',');
-  const st={tries:[],done:false};
+function whoRound(view){
+  const st={tries:[],misses:0,clues:view.clues||{},done:false};
   const scale=v=>Math.min(100,v/200*100);
   const CLUES=[
-    {lock:'Clue 1 · generation',open:()=>`Gen ${m.g}`},
-    {lock:'Clue 2 · type',open:()=>typeBadges(m.t),bare:true},
-    {lock:'Clue 3 · blurred sprite',open:()=>'Blurred sprite shown'}
+    {lock:'Clue 1 · generation',key:'g',open:c=>`Gen ${c.g}`},
+    {lock:'Clue 2 · type',key:'t',open:c=>typeBadges(c.t),bare:true},
+    {lock:'Clue 3 · blurred sprite',key:'blur',open:()=>'Blurred sprite shown'}
   ];
   const render=()=>{
-    const miss=st.tries.length, show=i=>st.done||miss>i;
-    const pic=hasSprite(m)?`<div class="sprite big">${st.done?spriteFull(m):miss>=3?spriteBlur(m):'<span class="qmark">?</span>'}</div>`:'';
+    const ans=st.reveal, c=ans?{g:ans.g,t:ans.t,blur:1}:st.clues, show=i=>c[CLUES[i].key]!==undefined;
+    const pic=ans?(hasSprite(ans)?`<div class="sprite big">${spriteFull(ans)}</div>`:'')
+      :(Object.keys(SPRITES).length?`<div class="sprite big">${st.clues.blur?`<img src="${st.clues.blur}" alt="Blurred mystery Pokémon">`:'<span class="qmark">?</span>'}</div>`:'');
     $('#app').innerHTML=`
     <div class="card">
       <div class="target">
         <div class="who">${pic}<div>
-          <div class="mystery">${st.done?`<span style="color:var(--ink);letter-spacing:-.02em">${esc(m.n)}</span>`:'? ? ? ? ?'}</div>
-          <div class="clues">${CLUES.map((c,i)=>`<span class="clue ${show(i)?'open':''} ${show(i)&&c.bare?'bare':''}">${show(i)?c.open():c.lock}</span>`).join('')}</div>
+          <div class="mystery">${ans?`<span style="color:var(--ink);letter-spacing:-.02em">${esc(ans.n)}</span>`:'? ? ? ? ?'}</div>
+          <div class="clues">${CLUES.map((cl,i)=>`<span class="clue ${show(i)?'open':''} ${show(i)&&cl.bare?'bare':''}">${show(i)?cl.open(c):cl.lock}</span>`).join('')}</div>
         </div></div>
-        <div class="bst"><small>BASE STAT TOTAL</small><div>${sum(m.st)}</div></div>
+        <div class="bst"><small>BASE STAT TOTAL</small><div>${view.bst}</div></div>
       </div>
       <div style="margin-top:12px">${STATS.map((s,i)=>`
         <div class="cmp" style="--c:${s.c};grid-template-columns:44px 1fr 48px">
           <div class="sl" style="color:${s.c}">${s.k}</div>
-          <div class="bars"><div class="a" style="width:${scale(m.st[i])}%"></div></div>
-          <div class="diff"><b>${m.st[i]}</b></div>
+          <div class="bars"><div class="a" style="width:${scale(view.st[i])}%"></div></div>
+          <div class="diff"><b>${view.st[i]}</b></div>
         </div>`).join('')}</div>
       ${st.done?`
         <div class="score"><div class="big" style="color:${st.pts?'var(--good)':'var(--bad)'}">${st.pts}</div>
-        <div class="sub">${st.pts?`Got it in ${miss+1}`:st.gaveUp?'Skipped':'Out of guesses'}</div>${lifeNote(st.pts)}</div>
+        <div class="sub">${st.pts?`Got it in ${st.misses+1}`:st.gaveUp?'Skipped':'Out of guesses'}</div>${lifeNote(st.pts)}</div>
         ${st.tries.length?`<div class="tries" style="justify-content:center">${st.tries.map(t=>`<span class="try ${t.near?'near':''}">${esc(t.n)}</span>`).join('')}</div>`:''}
-        <button class="btn" id="next">${roundOver()?'See results':'Next spread'}</button>`
+        <button class="btn" id="next">${G.state.over?'See results':'Next spread'}</button>`
       :`
         <div class="guessbox sugg">
           <input id="g" placeholder="Name the Pokémon…" autocomplete="off" spellcheck="false" aria-label="Your guess">
           <button class="btn" id="go">Guess</button>
           <div class="list" id="list" hidden></div>
         </div>
-        <div class="pips">${WHO_POINTS.map((p,i)=>`<span class="pip ${i>=miss?'on':''}" title="${p} pts"></span>`).join('')}</div>
-        <div class="hint">Worth <b style="color:var(--accent)">${WHO_POINTS[miss]}</b> points now</div>
+        <div class="pips">${WHO_POINTS.map((p,i)=>`<span class="pip ${i>=st.misses?'on':''}" title="${p} pts"></span>`).join('')}</div>
+        <div class="hint">Worth <b style="color:var(--accent)">${WHO_POINTS[st.misses]}</b> points now</div>
         <div class="tries">${st.tries.map(t=>`<span class="try ${t.near?'near':''}" title="${t.near?'Right species, wrong form':''}">${esc(t.n)}</span>`).join('')}</div>
         <div class="row2"><button class="btn ghost" id="skip">Give up</button></div>`}
     </div>`;
-    if(st.done){$('#next').onclick=round;$('#next').focus();return}
+    if(st.done){$('#next').onclick=nextRound;$('#next').focus();return}
     const inp=$('#g'),list=$('#list');let hl=-1,items=[];
     const showList=()=>{
       const q=norm(inp.value);hl=-1;
@@ -520,17 +593,22 @@ function whoRound(){
       list.hidden=!items.length;
       list.querySelectorAll('div').forEach(d=>d.onmousedown=e=>{e.preventDefault();inp.value=items[+d.dataset.i].n;list.hidden=true;submit()});
     };
-    const finishRound=()=>{st.done=true;$('#toast').classList.remove('show');recordRound(m,st.pts)};
+    let sending=false;
+    const send=async body=>{
+      if(sending)return;sending=true;busy(true,$('#go'),$('#skip'));
+      try{
+        const res=await G.be.guess(body);
+        if(body.guess&&res.result==='miss'||body.guess&&res.result==='round'&&!res.pts)st.tries.push({n:body._name,near:res.near});
+        if(res.result==='miss'){st.misses=res.misses;st.clues=res.clues;render();$('#g').focus();toast(res.near?'Right species, wrong form!':'Not quite!');return}
+        st.done=true;st.pts=res.pts;st.gaveUp=res.gaveUp;st.misses=res.misses;st.reveal=res.reveal;
+        $('#toast').classList.remove('show');afterRound(res);render();
+      }catch(e){sending=false;busy(false,$('#go'),$('#skip'));toast(e.message==='Failed to fetch'?'Connection problem, try again':e.message)}
+    };
     const submit=()=>{
       const x=BY_NORM[norm(inp.value)];
       if(!x){toast('Pick a Pokémon from the list');return}
       if(st.tries.some(t=>t.n===x.n)){toast('Already guessed');return}
-      if(x.st.join(',')===key){st.pts=WHO_POINTS[st.tries.length];finishRound();render();return}
-      const near=x.s===m.s;
-      st.tries.push({n:x.n,near});
-      if(st.tries.length>=WHO_POINTS.length){st.pts=0;finishRound()}
-      render();
-      if(!st.done){$('#g').focus();toast(near?'Right species, wrong form!':'Not quite!')}
+      send({guess:x.id,_name:x.n});
     };
     inp.oninput=showList;
     inp.onkeydown=e=>{
@@ -546,26 +624,26 @@ function whoRound(){
     };
     inp.onblur=()=>setTimeout(()=>list.hidden=true,100);
     $('#go').onclick=submit;
-    $('#skip').onclick=()=>{st.pts=0;st.gaveUp=true;finishRound();render()};
+    $('#skip').onclick=()=>send({giveUp:true});
     inp.focus();
   };
   render();
 }
 
 /* ---------- RESULTS ---------- */
+const sq=p=>p>=90?'🟩':p>=60?'🟨':p>=30?'🟧':'🟥';
 function finish(){
   G.finished=true;G.revealing=false;hud();
   if(G.inf)return finishInfinite();
-  const best=store.get('bsg-best',{}),prev=best[G.mode],max=G.picks.length*100;
-  const full=G.picks.length===ROUNDS;
-  const isBest=full&&(prev==null||G.total>prev);if(isBest){best[G.mode]=G.total;store.set('bsg-best',best)}
-  const sq=p=>p>=90?'🟩':p>=60?'🟨':p>=30?'🟧':'🟥';
-  const modeName=G.mode==='spread'?'Build the Spread':'Whose Spread?';
-  const share=`${GAME_NAME} · ${modeName}\n${G.results.map(r=>sq(r.pts)).join('')} ${G.total}/${max}`;
+  const best=store.get('bsg-best',{}),prev=best[G.mode],max=ROUNDS*100,total=G.state.score;
+  const full=G.results.length===ROUNDS;
+  const isBest=full&&(prev==null||total>prev);if(isBest){best[G.mode]=total;store.set('bsg-best',best)}
+  const modeName=MODE_NAMES[G.mode];
+  const share=`${GAME_NAME} · ${modeName}\n${G.results.map(r=>sq(r.pts)).join('')} ${total}/${max}`;
   $('#app').innerHTML=`
   <div class="card">
     <h2>${modeName}: done</h2>
-    <div class="score"><div class="big">${G.total}<span style="font-size:24px;color:var(--mute)">/${max}</span></div>
+    <div class="score"><div class="big">${total}<span style="font-size:24px;color:var(--mute)">/${max}</span></div>
       <div class="sub">${isBest&&prev!=null?'New personal best!':prev!=null&&full?`Best: ${prev}`:''}</div></div>
     <table class="sum">${G.results.map(r=>`<tr><td>${sq(r.pts)}</td><td>${esc(r.n)}</td><td>${r.pts}</td></tr>`).join('')}</table>
     <div class="row2"><button class="btn ghost" id="copy">Copy result</button><button class="btn" id="again">Play again</button></div>
@@ -574,22 +652,23 @@ function finish(){
   $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(share);toast('Copied!')}catch(e){toast('Copy is blocked here')}};
   $('#again').onclick=start;$('#menu').onclick=setup;
 }
+
 function finishInfinite(){
-  const modeName=MODE_NAMES[G.mode], rounds=G.results.length;
-  const perfect=G.results.filter(r=>r.pts===100).length;
-  const share=`${GAME_NAME} · Infinite ${modeName}\n${rounds} round${rounds===1?'':'s'} · ${G.total} points${perfect?` · ${perfect} perfect`:''}`;
+  const modeName=MODE_NAMES[G.mode], s=G.state, rounds=s.rounds;
+  const share=`${GAME_NAME} · Infinite ${modeName}\n${rounds} round${rounds===1?'':'s'} · ${s.score} points${s.perfect?` · ${s.perfect} perfect`:''}`;
   const top=G.results.slice().sort((a,b)=>b.pts-a.pts).slice(0,5);
+  const canSave=(G.ranked||G.localBoard)&&rounds>0;
   $('#app').innerHTML=`
   <div class="card">
     <h2>Infinite ${modeName}: run over</h2>
-    <div class="score"><div class="big">${G.total}</div>
-      <div class="sub">${rounds} round${rounds===1?'':'s'} · ${perfect} perfect · ${rounds?Math.round(G.total/rounds):0} average</div></div>
-    ${G.standard&&rounds?`
+    <div class="score"><div class="big">${s.score}</div>
+      <div class="sub">${rounds} round${rounds===1?'':'s'} · ${s.perfect} perfect · ${rounds?Math.round(s.score/rounds):0} average</div></div>
+    ${canSave?`
       <form class="saveform" id="sf">
         <input id="nm" maxlength="16" placeholder="Your name" autocomplete="nickname" value="${esc(store.get('bsg-name',''))}" aria-label="Name for the leaderboard">
         <button class="btn" type="submit">Save to leaderboard</button>
-      </form>`:`<p class="customnote">${rounds?'Played with custom generations or filters, so this run isn\'t on the leaderboard.':''}</p>`}
-    ${top.length?`<div class="label">Best rounds</div><table class="sum">${top.map(r=>`<tr><td>${r.pts>=90?'🟩':r.pts>=60?'🟨':r.pts>=30?'🟧':'🟥'}</td><td>${esc(r.n)}</td><td>${r.pts}</td></tr>`).join('')}</table>`:''}
+      </form>`:`<p class="customnote">${rounds?(G.inf&&!isStandard(settings)?'Played with custom generations or filters, so this run isn\'t on the leaderboard.':'This run wasn\'t ranked.'):''}</p>`}
+    ${top.length?`<div class="label">Best rounds</div><table class="sum">${top.map(r=>`<tr><td>${sq(r.pts)}</td><td>${esc(r.n)}</td><td>${r.pts}</td></tr>`).join('')}</table>`:''}
     <div class="row2"><button class="btn ghost" id="copy">Copy result</button><button class="btn" id="again">Play again</button></div>
     <button class="btn ghost" id="menu" style="margin-top:10px">Change mode or filters</button>
   </div>`;
@@ -599,9 +678,13 @@ function finishInfinite(){
     const name=$('#nm').value.trim().slice(0,16);
     if(!name){toast('Enter a name first');$('#nm').focus();return}
     store.set('bsg-name',name);
-    const entry={name,score:G.total,rounds,date:Date.now()};
-    const rank=await Board.submit(G.mode,entry);
-    showBoard(G.mode,entry,rank);
+    const btn=sf.querySelector('button');busy(true,btn);
+    try{
+      let entry,rank;
+      if(G.ranked){const r=await G.be.submit(name);entry=r.entry;rank=r.rank}
+      else{entry={name,score:s.score,rounds,perfect:s.perfect,date:Date.now()};rank=Board.addLocal(G.mode,entry)}
+      showBoard(G.mode,entry,rank);
+    }catch(err){busy(false,btn);toast(err.message==='Failed to fetch'?'Connection problem, try again':err.message)}
   };$('#nm').focus()}
   $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(share);toast('Copied!')}catch(e){toast('Copy is blocked here')}};
   $('#again').onclick=start;$('#menu').onclick=setup;
@@ -609,16 +692,19 @@ function finishInfinite(){
 
 async function showBoard(mode,mine,rank){
   G=null;hud();
-  const list=await Board.list(mode);
+  $('#app').innerHTML=`<div class="card"><h2>🏆 Infinite leaderboard</h2><p>Loading…</p></div>`;
+  let list=[],err='';
+  try{list=await Board.list(mode)}catch(e){err='Couldn\'t load the leaderboard. Check your connection and try again.'}
   const fmt=d=>new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+  const isMe=r=>mine&&r.date===mine.date&&r.score===mine.score&&r.name===mine.name;
   $('#app').innerHTML=`
   <div class="card">
     <h2>🏆 Infinite leaderboard</h2>
-    <p>Saved on this device. Only runs with every generation and filter included count.</p>
+    <p>${API_URL?'Every score here was checked by the server.':'Saved on this device.'} Only runs with every generation and filter included count.</p>
     <div class="lens">${Object.entries(MODE_NAMES).map(([k,v])=>`<button class="len ${k===mode?'on':''}" data-m="${k}"><b>${v}</b></button>`).join('')}</div>
-    ${mine&&rank>=0?`<div class="rankmsg">You placed <b>#${rank+1}</b>!</div>`:''}
-    ${list.length?`<table class="sum board"><tr class="bh"><td>#</td><td>Name</td><td>Rounds</td><td>Score</td></tr>
-      ${list.slice(0,20).map((r,i)=>`<tr class="${mine&&r.date===mine.date&&r.score===mine.score?'me':''}"><td>${i+1}</td><td>${esc(r.name)}<small>${fmt(r.date)}</small></td><td>${r.rounds}</td><td>${r.score}</td></tr>`).join('')}</table>`
+    ${mine&&rank?`<div class="rankmsg">You placed <b>#${rank}</b>!</div>`:''}
+    ${err?`<p class="customnote">${err}</p>`:list.length?`<table class="sum board"><tr class="bh"><td>#</td><td>Name</td><td>Rounds</td><td>Score</td></tr>
+      ${list.slice(0,20).map((r,i)=>`<tr class="${isMe(r)?'me':''}"><td>${i+1}</td><td>${esc(r.name)}<small>${fmt(r.date)}</small></td><td>${r.rounds}</td><td>${r.score}</td></tr>`).join('')}</table>`
       :`<p style="text-align:center;margin-top:20px">No runs yet. Be the first!</p>`}
     <button class="btn" id="back">Back to menu</button>
   </div>`;
