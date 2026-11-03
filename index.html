@@ -44,6 +44,25 @@ p{color:var(--mute);line-height:1.5;margin:0 0 14px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{background:var(--bg);border:1px solid var(--line);color:var(--mute);border-radius:999px;padding:7px 13px;font-family:var(--mono);font-size:13px}
 .chip.on{background:#ffcb3d1a;border-color:var(--accent);color:var(--accent)}
+.lens{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.len{text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:11px 14px;color:var(--ink)}
+.len b{display:block;font-size:15px}
+.len span{display:block;color:var(--mute);font-size:12px;margin-top:2px}
+.len.on{border-color:var(--accent);background:#ffcb3d12}
+.hearts{color:var(--bad);letter-spacing:2px;font-size:15px}
+.len .hearts{display:inline;font-size:14px;margin-left:4px;color:var(--bad)}
+.lifelost{display:inline-block;margin-top:10px;padding:6px 12px;border-radius:999px;background:#ff6b6b22;color:var(--bad);font-weight:700;font-size:14px}
+.customnote{font-size:12px;color:var(--accent);text-align:center;margin:8px 0 0}
+.saveform{display:flex;gap:8px;margin-top:18px}
+.saveform input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--ink);font-family:var(--display);font-size:16px;padding:12px 14px;border-radius:12px}
+.saveform input:focus{outline:2px solid var(--accent);border-color:transparent}
+.saveform .btn{width:auto;margin:0;padding:12px 18px;font-size:15px}
+.rankmsg{text-align:center;margin-top:16px;font-size:18px}.rankmsg b{color:var(--accent)}
+.board td:first-child{font-family:var(--mono);color:var(--mute)}
+.board td small{display:block;color:var(--mute);font-size:11px;font-family:var(--mono)}
+.board td:nth-child(3){font-family:var(--mono);color:var(--mute);text-align:right}
+.board .bh td{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mute);font-family:var(--mono);font-weight:500}
+.board tr.me td{background:#ffcb3d14;color:var(--accent)}
 .fdetails{margin-top:20px}
 .fdetails summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--bg);border:1px solid var(--line);border-radius:14px;user-select:none}
 .fdetails summary::-webkit-details-marker{display:none}
@@ -221,17 +240,38 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 const typeBadges=t=>t.map(x=>`<span class="type" style="background:${TYPE_COLORS[x]||'#666'}">${x}</span>`).join('');
 const store={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 
-const DEFAULT_SETTINGS={mode:'spread',gens:[1,2,3,4,5,6,7,8,9],f:Object.fromEntries(ALL_FILTER_IDS.map(i=>[i,'inc']))};
+const DEFAULT_SETTINGS={mode:'spread',len:'five',gens:[1,2,3,4,5,6,7,8,9],f:Object.fromEntries(ALL_FILTER_IDS.map(i=>[i,'inc']))};
 let settings=Object.assign({},DEFAULT_SETTINGS,store.get('bsg-settings2',{}));
 settings.f=Object.assign({},DEFAULT_SETTINGS.f,settings.f||{});
 const save=()=>store.set('bsg-settings2',settings);
 let G=null, filtersOpen=false;
 
+/* ---------- LEADERBOARD ----------
+   Stored on this device for now. To go online, replace these two functions with calls to a server. */
+const Board={
+  async list(mode){return store.get('bsg-board-'+mode,[])},
+  async submit(mode,entry){const b=store.get('bsg-board-'+mode,[]);b.push(entry);b.sort((x,y)=>y.score-x.score||x.date-y.date);store.set('bsg-board-'+mode,b.slice(0,50));return b.slice(0,50).indexOf(entry)}
+};
+const MODE_NAMES={spread:'Build the Spread',who:'Whose Spread?'};
+const isStandard=s=>s.gens.length===9&&ALL_FILTER_IDS.every(i=>s.f[i]==='inc');
+const hearts=n=>'<span class="hearts">'+[0,1,2].map(i=>i<n?'♥':'♡').join('')+'</span>';
+const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
+function recordRound(m,pts){
+  G.total+=pts;G.results.push({n:m.n,pts});G.i++;G.revealing=true;
+  if(G.inf&&pts===0)G.lives--;
+  hud();
+}
+const roundOver=()=>G.inf?G.lives<=0:G.i>=G.picks.length;
+const lifeNote=pts=>G.inf&&pts===0?`<div class="lifelost">${G.lives>0?`Life lost: ${G.lives} left`:'Out of lives!'}</div>`:'';
+
 function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),1700)}
 function hud(){
-  const playing=!!G&&(G.i<G.picks.length||G.revealing);
+  const playing=!!G&&!G.finished;
   $('#quit').hidden=!playing;
-  $('#hud').innerHTML=G?`Round <strong>${Math.min(G.i+(G.revealing?0:1),G.picks.length)}</strong>/${G.picks.length}<br>Score <strong>${G.total}</strong>`:'';
+  if(!G){$('#hud').innerHTML='';return}
+  const r=G.i+(G.revealing||G.finished?0:1);
+  $('#hud').innerHTML=G.inf?`Round <strong>${Math.max(1,r)}</strong> ${hearts(G.lives)}<br>Score <strong>${G.total}</strong>`
+    :`Round <strong>${Math.min(r,G.picks.length)}</strong>/${G.picks.length}<br>Score <strong>${G.total}</strong>`;
 }
 
 /* Sprites: blurred version is pre-blurred pixels (no sharp image is in the page until reveal). */
@@ -263,12 +303,17 @@ function setup(){
   $('#app').innerHTML=`
   <div class="card">
     <h2>Pick a mode</h2>
-    <p>${ROUNDS} rounds, up to 100 points each.</p>
+    <p>Up to 100 points per round.</p>
     <div class="modes">
       <button class="mode ${settings.mode==='spread'?'on':''}" data-mode="spread"><h3>Build the Spread</h3>
         <span>You get the Pokémon and its BST. Share the points across six sliders. Every point you're off costs one point.</span></button>
       <button class="mode ${settings.mode==='who'?'on':''}" data-mode="who"><h3>Whose Spread?</h3>
         <span>You get six raw base stats. Name the Pokémon in 4 guesses or fewer. Each miss gives a clue: generation, then type, then a blurred sprite.</span></button>
+    </div>
+    <div class="label">Length</div>
+    <div class="lens">
+      <button class="len ${settings.len==='five'?'on':''}" data-len="five"><b>${ROUNDS} rounds</b><span>Aim for a perfect ${ROUNDS*100}</span></button>
+      <button class="len ${settings.len==='inf'?'on':''}" data-len="inf"><b>Infinite ${hearts(3)}</b><span>Score 0 in a round and you lose a life</span></button>
     </div>
     <div class="label">Generations <button id="allgens">${settings.gens.length===9?'none':'all'}</button></div>
     <div class="chips" id="gens">${[1,2,3,4,5,6,7,8,9].map(g=>`<button class="chip ${settings.gens.includes(g)?'on':''}" data-g="${g}">Gen ${g}</button>`).join('')}</div>
@@ -283,7 +328,9 @@ function setup(){
       <div class="freset"><button id="resetf">Reset filters</button></div>
     </details>
     <div class="poolcount" id="pc"></div>
+    <div class="customnote" id="cn" hidden>Custom generations or filters: Infinite runs only go on the leaderboard with everything included.</div>
     <button class="btn" id="start">Start</button>
+    <button class="btn ghost" id="lb" style="margin-top:10px">🏆 Infinite leaderboard</button>
     <div class="best">${best.spread!=null||best.who!=null?`Best: Build the Spread ${best.spread??'–'}/${ROUNDS*100} · Whose Spread? ${best.who??'–'}/${ROUNDS*100}`:''}</div>
   </div>`;
   const refresh=()=>{
@@ -291,6 +338,7 @@ function setup(){
     pc.className='poolcount'+(n?'':' empty');
     pc.innerHTML=n?`<b>${n}</b> Pokémon in the pool`:`<b>No Pokémon match these filters</b>`;
     $('#start').disabled=!n;
+    $('#cn').hidden=!(settings.len==='inf'&&!isStandard(settings));
     const changed=FILTERS.flatMap(g=>g.items).filter(i=>settings.f[i.id]!=='inc');
     const fs=$('#fsum'); fs.className='fsum'+(changed.length?' changed':'');
     fs.textContent=changed.length?changed.map(i=>(settings.f[i.id]==='only'?'Only ':'No ')+i.label.toLowerCase()).join(' · '):'Everything included';
@@ -306,23 +354,31 @@ function setup(){
   document.querySelectorAll('.seg').forEach(seg=>seg.querySelectorAll('button').forEach(b=>b.onclick=()=>{
     settings.f[seg.dataset.id]=b.dataset.v;save();seg.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));refresh();
   }));
+  document.querySelectorAll('.len').forEach(b=>b.onclick=()=>{settings.len=b.dataset.len;save();document.querySelectorAll('.len').forEach(x=>x.classList.toggle('on',x===b));refresh()});
+  $('#lb').onclick=()=>showBoard(settings.mode);
   $('#start').onclick=start;
   refresh();
 }
 
 function start(){
   $('#toast').classList.remove('show');
-  const pool=poolFor(settings).slice();
-  for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]]}
-  G={mode:settings.mode,picks:pool.slice(0,ROUNDS),i:0,total:0,results:[]};
+  const pool=poolFor(settings), inf=settings.len==='inf';
+  const picks=shuffle(pool);
+  G={mode:settings.mode,inf,lives:3,pool,standard:isStandard(settings),picks:inf?picks:picks.slice(0,ROUNDS),i:0,total:0,results:[]};
   round();
 }
-function round(){G.revealing=false;hud();if(G.i>=G.picks.length)return finish();G.mode==='spread'?spreadRound():whoRound()}
+function round(){
+  G.revealing=false;
+  if(roundOver())return finish();
+  if(G.inf&&G.i>=G.picks.length)G.picks=G.picks.concat(shuffle(G.pool)); // went through the whole pool: reshuffle
+  hud();G.mode==='spread'?spreadRound():whoRound()}
 
 /* ---------- QUIT ---------- */
 $('#quit').onclick=()=>{
   const d=document.createElement('div');d.className='modal';
-  d.innerHTML=`<div class="card"><h2>Quit this game?</h2><p>You'll lose this game's score and go back to the menu.</p>
+  d.innerHTML=G.inf?`<div class="card"><h2>End this run?</h2><p>Your run stops here and your score of ${G.total} counts.</p>
+    <div class="row2"><button class="btn ghost" id="stay">Keep playing</button><button class="btn danger" id="leave">End run</button></div></div>`
+    :`<div class="card"><h2>Quit this game?</h2><p>You'll lose this game's score and go back to the menu.</p>
     <div class="row2"><button class="btn ghost" id="stay">Keep playing</button><button class="btn danger" id="leave">Quit</button></div></div>`;
   document.body.appendChild(d);
   const close=()=>{d.remove();document.removeEventListener('keydown',esc_)};
@@ -330,7 +386,7 @@ $('#quit').onclick=()=>{
   document.addEventListener('keydown',esc_);
   d.onclick=e=>{if(e.target===d)close()};
   d.querySelector('#stay').onclick=close;
-  d.querySelector('#leave').onclick=()=>{close();setup()};
+  d.querySelector('#leave').onclick=()=>{close();if(G.inf){G.lives=0;finish()}else setup()};
   d.querySelector('#stay').focus();
 };
 
@@ -377,7 +433,7 @@ function spreadRound(){
 }
 function revealSpread(m,g){
   const diffs=m.st.map((v,i)=>g[i]-v),off=sum(diffs.map(Math.abs)),pts=Math.max(0,100-off);
-  G.total+=pts;G.results.push({n:m.n,pts});G.i++;G.revealing=true;hud();
+  recordRound(m,pts);
   const scale=v=>Math.min(100,v/200*100);
   const pic=hasSprite(m)?`<div class="sprite">${spriteFull(m)}</div>`:'';
   $('#app').innerHTML=`
@@ -387,7 +443,7 @@ function revealSpread(m,g){
       <div class="bst"><small>BASE STAT TOTAL</small><div>${sum(m.st)}</div></div>
     </div>
     <div class="score"><div class="big" style="color:${pts>=90?'var(--good)':pts>=50?'var(--accent)':'var(--bad)'}">${pts}</div>
-      <div class="sub">${off} point${off===1?'':'s'} off in total${pts===100?' · PERFECT!':''}</div></div>
+      <div class="sub">${off} point${off===1?'':'s'} off in total${pts===100?' · PERFECT!':''}</div>${lifeNote(pts)}</div>
     <div style="margin-top:14px">${STATS.map((s,i)=>`
       <div class="cmp" style="--c:${s.c}">
         <div class="sl" style="color:${s.c}">${s.k}</div>
@@ -395,7 +451,7 @@ function revealSpread(m,g){
         <div class="diff"><span style="color:var(--mute)">${g[i]}</span>&nbsp; <b class="${diffs[i]===0?'ok':'off'}">${diffs[i]===0?'✓':(diffs[i]>0?'+':'')+diffs[i]}</b></div>
       </div>`).join('')}</div>
     <div class="legend"><span><i></i>actual</span><span><i class="w"></i>your guess</span></div>
-    <button class="btn" id="next">${G.i>=G.picks.length?'See results':'Next Pokémon'}</button>
+    <button class="btn" id="next">${roundOver()?'See results':'Next Pokémon'}</button>
   </div>`;
   requestAnimationFrame(()=>requestAnimationFrame(()=>{
     document.querySelectorAll('.bars .a').forEach(e=>e.style.width=e.dataset.w+'%');
@@ -434,9 +490,9 @@ function whoRound(){
         </div>`).join('')}</div>
       ${st.done?`
         <div class="score"><div class="big" style="color:${st.pts?'var(--good)':'var(--bad)'}">${st.pts}</div>
-        <div class="sub">${st.pts?`Got it in ${miss+1}`:st.gaveUp?'Skipped':'Out of guesses'}</div></div>
+        <div class="sub">${st.pts?`Got it in ${miss+1}`:st.gaveUp?'Skipped':'Out of guesses'}</div>${lifeNote(st.pts)}</div>
         ${st.tries.length?`<div class="tries" style="justify-content:center">${st.tries.map(t=>`<span class="try ${t.near?'near':''}">${esc(t.n)}</span>`).join('')}</div>`:''}
-        <button class="btn" id="next">${G.i>=G.picks.length?'See results':'Next spread'}</button>`
+        <button class="btn" id="next">${roundOver()?'See results':'Next spread'}</button>`
       :`
         <div class="guessbox sugg">
           <input id="g" placeholder="Name the Pokémon…" autocomplete="off" spellcheck="false" aria-label="Your guess">
@@ -464,7 +520,7 @@ function whoRound(){
       list.hidden=!items.length;
       list.querySelectorAll('div').forEach(d=>d.onmousedown=e=>{e.preventDefault();inp.value=items[+d.dataset.i].n;list.hidden=true;submit()});
     };
-    const finishRound=()=>{st.done=true;G.total+=st.pts;G.results.push({n:m.n,pts:st.pts});G.i++;G.revealing=true;$('#toast').classList.remove('show');hud()};
+    const finishRound=()=>{st.done=true;$('#toast').classList.remove('show');recordRound(m,st.pts)};
     const submit=()=>{
       const x=BY_NORM[norm(inp.value)];
       if(!x){toast('Pick a Pokémon from the list');return}
@@ -498,7 +554,8 @@ function whoRound(){
 
 /* ---------- RESULTS ---------- */
 function finish(){
-  hud();
+  G.finished=true;G.revealing=false;hud();
+  if(G.inf)return finishInfinite();
   const best=store.get('bsg-best',{}),prev=best[G.mode],max=G.picks.length*100;
   const full=G.picks.length===ROUNDS;
   const isBest=full&&(prev==null||G.total>prev);if(isBest){best[G.mode]=G.total;store.set('bsg-best',best)}
@@ -516,6 +573,57 @@ function finish(){
   </div>`;
   $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(share);toast('Copied!')}catch(e){toast('Copy is blocked here')}};
   $('#again').onclick=start;$('#menu').onclick=setup;
+}
+function finishInfinite(){
+  const modeName=MODE_NAMES[G.mode], rounds=G.results.length;
+  const perfect=G.results.filter(r=>r.pts===100).length;
+  const share=`${GAME_NAME} · Infinite ${modeName}\n${rounds} round${rounds===1?'':'s'} · ${G.total} points${perfect?` · ${perfect} perfect`:''}`;
+  const top=G.results.slice().sort((a,b)=>b.pts-a.pts).slice(0,5);
+  $('#app').innerHTML=`
+  <div class="card">
+    <h2>Infinite ${modeName}: run over</h2>
+    <div class="score"><div class="big">${G.total}</div>
+      <div class="sub">${rounds} round${rounds===1?'':'s'} · ${perfect} perfect · ${rounds?Math.round(G.total/rounds):0} average</div></div>
+    ${G.standard&&rounds?`
+      <form class="saveform" id="sf">
+        <input id="nm" maxlength="16" placeholder="Your name" autocomplete="nickname" value="${esc(store.get('bsg-name',''))}" aria-label="Name for the leaderboard">
+        <button class="btn" type="submit">Save to leaderboard</button>
+      </form>`:`<p class="customnote">${rounds?'Played with custom generations or filters, so this run isn\'t on the leaderboard.':''}</p>`}
+    ${top.length?`<div class="label">Best rounds</div><table class="sum">${top.map(r=>`<tr><td>${r.pts>=90?'🟩':r.pts>=60?'🟨':r.pts>=30?'🟧':'🟥'}</td><td>${esc(r.n)}</td><td>${r.pts}</td></tr>`).join('')}</table>`:''}
+    <div class="row2"><button class="btn ghost" id="copy">Copy result</button><button class="btn" id="again">Play again</button></div>
+    <button class="btn ghost" id="menu" style="margin-top:10px">Change mode or filters</button>
+  </div>`;
+  const sf=$('#sf');
+  if(sf){sf.onsubmit=async e=>{
+    e.preventDefault();
+    const name=$('#nm').value.trim().slice(0,16);
+    if(!name){toast('Enter a name first');$('#nm').focus();return}
+    store.set('bsg-name',name);
+    const entry={name,score:G.total,rounds,date:Date.now()};
+    const rank=await Board.submit(G.mode,entry);
+    showBoard(G.mode,entry,rank);
+  };$('#nm').focus()}
+  $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(share);toast('Copied!')}catch(e){toast('Copy is blocked here')}};
+  $('#again').onclick=start;$('#menu').onclick=setup;
+}
+
+async function showBoard(mode,mine,rank){
+  G=null;hud();
+  const list=await Board.list(mode);
+  const fmt=d=>new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
+  $('#app').innerHTML=`
+  <div class="card">
+    <h2>🏆 Infinite leaderboard</h2>
+    <p>Saved on this device. Only runs with every generation and filter included count.</p>
+    <div class="lens">${Object.entries(MODE_NAMES).map(([k,v])=>`<button class="len ${k===mode?'on':''}" data-m="${k}"><b>${v}</b></button>`).join('')}</div>
+    ${mine&&rank>=0?`<div class="rankmsg">You placed <b>#${rank+1}</b>!</div>`:''}
+    ${list.length?`<table class="sum board"><tr class="bh"><td>#</td><td>Name</td><td>Rounds</td><td>Score</td></tr>
+      ${list.slice(0,20).map((r,i)=>`<tr class="${mine&&r.date===mine.date&&r.score===mine.score?'me':''}"><td>${i+1}</td><td>${esc(r.name)}<small>${fmt(r.date)}</small></td><td>${r.rounds}</td><td>${r.score}</td></tr>`).join('')}</table>`
+      :`<p style="text-align:center;margin-top:20px">No runs yet. Be the first!</p>`}
+    <button class="btn" id="back">Back to menu</button>
+  </div>`;
+  document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>showBoard(b.dataset.m));
+  $('#back').onclick=setup;
 }
 setup();
 </script>
