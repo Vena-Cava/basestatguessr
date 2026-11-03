@@ -29,6 +29,12 @@ ENGLISH = '9'
 STAT_IDS = {'1': 0, '2': 1, '3': 2, '4': 3, '5': 4, '6': 5}  # hp atk def spa spd spe
 # Known errors in the fangame files, used only when PokéAPI has no entry (or with --offline).
 OVERRIDES = {'METAGROSS_1': [80, 145, 150, 105, 110, 110]}  # Mega Metagross had Mega Salamence's stats
+# Forms taken from PokéAPI even though your PBS files don't have them.
+# PokéAPI entry -> (name shown in the game, base species ID in your PBS, sprite ID to use, evolution stage)
+EXTRAS = {
+    'pikachu-starter': ('Partner Pikachu', 'PIKACHU', 'PIKACHU', 'single'),
+    'eevee-starter':   ('Partner Eevee',   'EEVEE',   'EEVEE',   'single'),
+}
 REGION = {'alola': 'alolan', 'galar': 'galarian', 'hisui': 'hisuian', 'paldea': 'paldean'}
 
 def norm(s):
@@ -187,7 +193,8 @@ def match(entries, by_species):
         for j, _, e, v in sorted(pairs, key=lambda p: -p[0]):
             if id(e) in done or v['ident'] in used: continue
             e['api'] = v; used.add(v['ident']); done.add(id(e))
-        unmatched_api += [v['ident'] for v in vars_ if v['ident'] not in used and v['st'] != (base or {}).get('st')]
+        known = {tuple(e['st']) for e in es} | {tuple(e['fan_st']) for e in es}  # same stats as something already in the game = a duplicate form, not missing
+        unmatched_api += [v['ident'] for v in vars_ if v['ident'] not in used and tuple(v['st']) not in known and v['ident'] not in EXTRAS]
     return unmatched_api
 
 # ---------------------------------------------------------------- sprites
@@ -203,7 +210,7 @@ def build_sprites(entries, folder, scramble):
         b = io.BytesIO(); im.save(b, 'WEBP', method=4, **kw); return b.getvalue()
     out, missing = {}, []
     for e in entries:
-        cands = [e['id']] + ([e['id'].split('_')[0] + '_FEMALE'] if '(Female)' in e['n'] else [])
+        cands = [e['id']] + ([e['id'].split('_')[0] + '_FEMALE'] if '(Female)' in e['n'] else []) + ([e['sprite']] if e.get('sprite') else [])
         p = next((files[c.upper()] for c in cands if c.upper() in files), None)
         if not p: missing.append(e['n']); continue
         im = Image.open(p).convert('RGBA')
@@ -245,6 +252,14 @@ def main():
             e['st'] = v['st']
             if v['t']: e['t'] = v['t']
             e['src'] = 'pokeapi'
+        api_by_ident = {v['ident']: v for vs in by_species.values() for v in vs}
+        for ident, (name, sp, sprite, stg) in EXTRAS.items():
+            v = api_by_ident.get(ident); b = species.get(sp)
+            if not v or not b: print(f'Extra form {ident}: not found, skipped'); continue
+            base = next(e for e in entries if e['id'] == sp)
+            entries.append(dict(base, n=name, st=v['st'], t=v['t'] or base['t'], form='alt', stage=stg,
+                                id=f'{sp}_{ident.split("-")[-1].upper()}', sprite=sprite, src='pokeapi-extra',
+                                fan_st=v['st'], fan_t=v['t'] or base['t'], api=v))
         print(f'PokéAPI: {len(entries) - len(gaps)} matched, {len(diffs)} differ from your files, {len(gaps)} kept from your files')
         report += [f'## Your files differ from PokéAPI ({len(diffs)})', '',
                    'The game uses the PokéAPI values. If these are deliberate fangame changes, ignore them.', '',
@@ -255,7 +270,7 @@ def main():
         report += ['', f'## Not found in PokéAPI, kept from your files ({len(gaps)})', '']
         report += [f"- {e['n']} ({'/'.join(map(str, e['st']))})" for e in gaps] or ['- none']
         report += ['', f'## In PokéAPI with different stats, but not in your files ({len(unmatched_api)})', '',
-                   'Not in the game because there is no sprite or PBS entry for them.', '']
+                   'Forms whose stats match one already in the game (e.g. Wash Rotom = Heat Rotom) are left out of this list.', '']
         report += [f'- `{x}`' for x in unmatched_api] or ['- none']
 
     for e in entries:
