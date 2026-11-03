@@ -249,7 +249,7 @@ let G=null, filtersOpen=false;
 
 /* ---------- SERVER ----------
    Put your Cloudflare Worker address here (see README). Leave it empty and the leaderboard stays on each player's device. */
-const API_URL='https://basestatguessr-api.yoursubdomain.workers.dev';
+const API_URL='https://basestatguessr-api.basestatguessr.workers.dev';
 const MODE_NAMES={spread:'Build the Spread',who:'Whose Spread?'};
 const isStandard=s=>s.gens.length===9&&ALL_FILTER_IDS.every(i=>s.f[i]==='inc');
 const isRanked=s=>s.len==='inf'&&isStandard(s);   // Infinite with everything included = leaderboard run
